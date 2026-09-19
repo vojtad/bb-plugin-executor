@@ -10,6 +10,7 @@ import {
   transportForKind,
 } from "../../contract.js";
 import { alwaysAsks, type Catalog } from "../catalog.js";
+import { describeRefusal } from "../oauth/flow.js";
 import { describeReach, type ServerReach } from "./gateway.js";
 import { warnQuietly } from "./log.js";
 import { describeParameters } from "./tool-details.js";
@@ -362,7 +363,15 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     },
 
     oauth_complete: async (input) => {
-      const { serverId } = await deps.oauth.complete(input.state, input.code);
+      let serverId: string;
+      try {
+        ({ serverId } = await deps.oauth.complete(input.state, input.code));
+      } catch (error) {
+        // `describeRefusal` already exists for the refresh path and was never
+        // used here, so a failed code exchange put the provider's raw JSON in
+        // front of the user.
+        throw new Error(`This sign-in could not be completed: ${describeRefusal(error)}`);
+      }
       // A grant that was just issued is a grant that works, whatever was
       // recorded about the last one.
       deps.registry.setAuthError(serverId, null);

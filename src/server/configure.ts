@@ -95,12 +95,9 @@ export function buildInstructions(rows: readonly CatalogTool[]): string {
     "",
     ...entries,
     "",
-    "A keyword search will not find these - it matches whole words, and "
-    + "\"notion\" is not a hit for a tool called `execute`. Load a door by its "
-    + "exact name instead (Claude Code: `ToolSearch` with `select:<name>`, which "
-    + "may carry your provider's prefix for BB tools, e.g. "
-    + "`select:mcp__bb-bridge__execute`), or run `bb mcp list`, which does not "
-    + "search at all.",
+    "Load a door by its exact name rather than searching for the service - in "
+    + "Claude Code, `ToolSearch` with `select:<name>`, where the name may carry "
+    + "your provider's prefix for BB tools, e.g. `select:mcp__bb-bridge__execute`.",
   ];
   const text = lines.join("\n");
   return text.length <= MAX_INSTRUCTIONS ? text : `${text.slice(0, MAX_INSTRUCTIONS - 1)}\u2026`;

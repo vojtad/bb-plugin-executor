@@ -264,8 +264,8 @@ export function registerCatalogTools(
           const current = deps.registry.getToolByRegisteredName(registeredName);
           if (!current) {
             return errorResult(
-              `The MCP tool "${registeredName}" is gone: server "${row.serverId}" is no longer configured. `
-              + "Ask the user to re-add it in the MCP panel.",
+              `The MCP tool "${registeredName}" is gone: server "${row.serverId}" is no `
+              + "longer configured. Tell the user; do not try to add it back yourself.",
             );
           }
           if (current.stale) {

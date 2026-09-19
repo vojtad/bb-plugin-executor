@@ -104,7 +104,10 @@ function cancellationReason(
       return `${prefix}: they declined the request.`;
     case "timeout":
       return `${prefix}: the request was cancelled because it went unanswered. `
-        + "Ask whether they still want it before calling this tool again.";
+        + "Ask whether they still want it before calling this tool again - and if "
+        + "you are running on behalf of another agent rather than a person, say so "
+        + "to your caller instead of retrying: nobody saw this prompt, and a second "
+        + "attempt will wait just as long.";
     case "thread-stopped":
       return `${prefix}: the thread was stopped while the request was open.`;
     case "thread-deleted":
@@ -215,9 +218,10 @@ export function createConsentGate(deps: {
       // threw. Refusing retryably beats failing the turn.
       return {
         allowed: false,
-        reason: `Could not ask the user to approve the MCP tool "${tool.upstreamName}": `
-          + `${String(error)}. This usually means another prompt is already open `
-          + "in this thread; wait for the user to answer it, then call this tool again.",
+        reason: `Could not ask the user to approve the MCP tool "${tool.upstreamName}". `
+          + "This usually means another prompt is already open in this thread. You "
+          + "cannot wait for that from inside a tool call - end your turn, tell the "
+          + "user a prompt is waiting for them, and try again after they answer.",
       };
     }
 

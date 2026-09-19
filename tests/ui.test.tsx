@@ -804,12 +804,12 @@ describe("tool table", () => {
       // An absent binding row and a row saying "off" used to render the same,
       // which is the whole reason `bindings_list` reports both.
       const control = await view.findByLabelText("notion_search in this project");
-      await waitFor(() => { expect(control.textContent).toContain("Default (on)"); });
+      await waitFor(() => { expect(control.textContent).toContain("Follow default (on)"); });
     });
 
     it("forces a tool off for this project alone", async () => {
       const view = await withProject();
-      await choose(await view.findByLabelText("notion_search in this project"), "Off");
+      await choose(await view.findByLabelText("notion_search in this project"), "Off for this project");
       await waitFor(() => {
         expect(calls(view, "binding_set")).toEqual([{
           method: "binding_set",
@@ -827,7 +827,7 @@ describe("tool table", () => {
       await waitFor(() => { expect(control.textContent).toContain("Off"); });
       // `inherit` deletes the row, so the tool goes on following a default
       // that may flip later; "on" would pin it and stop tracking.
-      await choose(control, "Default (on)");
+      await choose(control, "Follow default (on)");
       await waitFor(() => {
         expect(calls(view, "binding_set")).toEqual([{
           method: "binding_set",

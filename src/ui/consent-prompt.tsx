@@ -69,7 +69,16 @@ export function ConsentPrompt(
         <p className="mt-1 text-xs text-muted-foreground">
           This tool can change or send data outside BB.
         </p>
-      ) : null}
+      ) : (
+        // A read-only tool that is asking anyway is a forced-ask host, and
+        // without this the prompt looks like a bug: the panel says reads do
+        // not prompt, and here one is.
+        <p className="mt-1 text-xs text-muted-foreground">
+          This tool only reads, but this server always asks: content it returns
+          can be written by anyone who can reach that account, so reading it is
+          itself the risk.
+        </p>
+      )}
 
       <p className="mt-2 text-xs text-muted-foreground">Arguments</p>
       <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-2 text-xs text-foreground">

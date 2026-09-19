@@ -282,6 +282,7 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [callback, setCallback] = useState<CallbackState | null>(null);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
 
   /**
    * The callback URL an OAuth client has to be told about, for THIS browser.
@@ -339,13 +340,19 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
         const projectList = await rpcRef.current.call("projects_list", null);
         if (cancelled) return;
         setProjects(projectList.projects);
+        setProjectsError(null);
         // The personal project is deliberately not selected here any more.
         // Landing inside a project makes the first click an override, and an
         // override is the one answer that stops following the default - so
         // the convenience would cost the user the setting that reaches every
         // other project, including the ones they have not created yet.
-      } catch {
-        if (!cancelled) setProjects([]);
+      } catch (cause) {
+        // Distinguished from "no projects": this is the one call that leaves
+        // the plugin's own database, and an empty picker silently told the
+        // user they had nothing to bind tools to.
+        if (cancelled) return;
+        setProjects([]);
+        setProjectsError(String(cause));
       }
     })();
     return () => { cancelled = true; };
@@ -585,10 +592,19 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
             (servers ?? []).filter((entry) => entry.alwaysAsk).map((entry) => entry.id),
           )}
           projects={projects}
+          projectsError={projectsError}
           projectId={projectId}
           overrides={overrides}
           busy={busy}
           onProjectChange={setProjectId}
+          onBindAll={(registeredNames, state) => mutate(async () => {
+            // Sequential on purpose: `binding_set` is one row per call and
+            // the panel refetches once at the end, so a burst of parallel
+            // writes would only race the same SQLite file.
+            for (const registeredName of registeredNames) {
+              await rpcRef.current.call("binding_set", { projectId, registeredName, state });
+            }
+          })}
           onBind={(registeredName, state) => mutate(
             () => rpcRef.current.call("binding_set", { projectId, registeredName, state }),
           )}
@@ -690,7 +706,10 @@ function DriftNotice(props: {
           disabled={props.busy || requested}
           onClick={() => {
             setRequested(true);
-            void props.onReload();
+            // Reset on failure: a reload that did not happen must not leave
+            // the button saying it is happening, with no way back but a
+            // page refresh.
+            void props.onReload().then((ok) => { if (!ok) setRequested(false); });
           }}
         >
           {requested ? "Reloading" : "Reload plugin"}
@@ -1699,12 +1718,16 @@ function ToolTable(props: {
    */
   alwaysAskServers: ReadonlySet<string>;
   projects: McpProjectDto[];
+  /** Why the project list is empty, when it is empty because it failed. */
+  projectsError: string | null;
   projectId: string;
   /** The chosen project's overrides. An absent name inherits the default. */
   overrides: ReadonlyMap<string, boolean>;
   busy: boolean;
   onProjectChange(projectId: string): void;
   onBind(registeredName: string, state: BindingState): Promise<boolean>;
+  /** The same, for every shown tool at once. */
+  onBindAll(registeredNames: string[], state: BindingState): Promise<boolean>;
   onDefault(registeredNames: string[], defaultEnabled: boolean): Promise<boolean>;
   onAsk(tool: McpToolDto, ask: boolean): Promise<boolean>;
 }): ReactElement {
@@ -1764,7 +1787,13 @@ function ToolTable(props: {
           has to be legible before it starts silently dropping tools.
         */}
         <span className="text-xs text-muted-foreground">
-          {selected.size} of {MAX_SELECTED_TOOLS} selected
+          <span className={selected.size > MAX_SELECTED_TOOLS ? "text-destructive" : undefined}>
+            {selected.size} of {MAX_SELECTED_TOOLS} selected
+            {selected.size > MAX_SELECTED_TOOLS
+              ? ` - ${selected.size - MAX_SELECTED_TOOLS} past the cap are dropped,`
+                + " by name, before the model sees them"
+              : ""}
+          </span>
         </span>
         {/*
           The count answers how many, which is the cheap half of the question.
@@ -1795,6 +1824,11 @@ function ToolTable(props: {
             </SelectContent>
           </Select>
         </div>
+        {props.projectsError === null ? null : (
+          <span className="text-xs text-destructive">
+            Could not list projects, so only the defaults can be edited.
+          </span>
+        )}
         <div className="ml-auto w-56">
           <Select value={props.projectId} onValueChange={props.onProjectChange}>
             <SelectTrigger aria-label="Project">
@@ -1839,7 +1873,44 @@ function ToolTable(props: {
             Disable all shown
           </Button>
         </div>
-      ) : null}
+      ) : (
+        <div className="mt-2 flex flex-wrap items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={props.busy || shownNames.length === 0}
+            onClick={() => { void props.onBindAll(shownNames, "on"); }}
+          >
+            On for this project
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={props.busy || shownNames.length === 0}
+            onClick={() => { void props.onBindAll(shownNames, "off"); }}
+          >
+            Off for this project
+          </Button>
+          {/* The count is what tells a user who clicked around what they
+              actually changed here, as opposed to what this project inherits
+              from the defaults. */}
+          <span className="ml-1 text-xs text-muted-foreground">
+            {props.overrides.size === 0
+              ? "No overrides - every tool follows its default."
+              : `${props.overrides.size} override(s) differ from the defaults.`}
+          </span>
+          {props.overrides.size === 0 ? null : (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={props.busy}
+              onClick={() => { void props.onBindAll([...props.overrides.keys()], "inherit"); }}
+            >
+              Clear overrides
+            </Button>
+          )}
+        </div>
+      )}
 
       {props.tools.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">
@@ -1891,10 +1962,12 @@ function ToolTable(props: {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="inherit">
-                        {tool.defaultEnabled ? "Default (on)" : "Default (off)"}
+                        {tool.defaultEnabled
+                          ? "Follow default (on)"
+                          : "Follow default (off)"}
                       </SelectItem>
-                      <SelectItem value="on">Always on</SelectItem>
-                      <SelectItem value="off">Off</SelectItem>
+                      <SelectItem value="on">On for this project</SelectItem>
+                      <SelectItem value="off">Off for this project</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1937,16 +2010,19 @@ function ToolTable(props: {
                     work, so the row says what does. */}
                 {tool.driftedFromRegistration ? (
                   <p className="text-xs text-muted-foreground">
-                    This tool's description or inputs changed after BB
+                    This tool&apos;s description or inputs changed after BB
                     registered it. A registered tool cannot be updated in
                     place, so threads keep seeing the previous version until
-                    the plugin is reloaded: <code>bb plugin reload mcp</code>.
+                    the plugin is reloaded - the Reload plugin button at the
+                    top of this page does it, or <code>bb plugin reload mcp</code>
+                    {" "}from a shell.
                   </p>
                 ) : null}
                 {forced ? (
                   <p className="text-xs text-muted-foreground">
-                    Always asks: reading an attacker-authored message from a
-                    Google account is itself the attack this prompt exists for,
+                    Always asks: content in a Google account can be written by
+                    anyone who can reach it, and reading it is itself the
+                    attack this prompt exists for,
                     so a read-only marking does not switch it off.
                   </p>
                 ) : null}

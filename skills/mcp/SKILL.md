@@ -28,7 +28,8 @@ fix is the MCP panel, not a workaround - unless it sits behind a door.
 A door is a tool that reaches services which are not in your tool list under
 their own names. Your instructions for this thread name every door you have
 and what each one reaches - read that list before telling anyone a service is
-unavailable. A tool list scanned for a Notion-shaped name says no every time,
+unavailable. If you were given no such list, you have no doors, and your tool
+list is the whole inventory. A tool list scanned for a Notion-shaped name says no every time,
 and saying so is wrong.
 
 `bb mcp list` prints the same thing, and does not involve a search. The MCP
@@ -101,8 +102,12 @@ same turn, and stop if that is not what the user asked for.
 ## Seeing what is configured
 
 Run `bb mcp` (or `bb mcp list`) in a shell. It prints every configured server,
-its transport and command or URL, and the tools each one contributes. It is
-read-only and safe to run at any time.
+its connection type and command or URL, and the tools each one contributes,
+marking which are on by default (`*`), which stop and ask the user before they
+run (`?`), and which have changed since BB registered them (`!`). It also says
+when a server is not responding, in which case the tools under it are the last
+ones read and not necessarily what is there now. Read-only and safe to run at
+any time.
 
 The full view - adding a server, connecting an OAuth account, choosing which
 tools a project gets - is the **MCP** panel in the BB sidebar. Adding a server
@@ -112,7 +117,7 @@ the user. Point them at the panel rather than attempting it.
 ## When a call fails
 
 - **"is no longer configured"** - the server was removed. Tell the user; do
-  not try to add it back.
+  not try to add it back yourself.
 - **"rejected the stored credentials" / "reconnect"** - the OAuth grant
   expired. The error carries the reason the authorization server gave, and
   that reason is the part to repeat: "reconnect it" is sometimes the whole

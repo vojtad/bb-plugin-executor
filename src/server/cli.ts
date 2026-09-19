@@ -23,6 +23,7 @@ function describe(bb: BbPluginApi, registry: Registry): string {
   const lines: string[] = [];
   let anyDefault = false;
   let anyDrifted = false;
+  let anyAsk = false;
   for (const server of servers) {
     const target = server.transport === "stdio"
       ? [server.command, ...server.args].join(" ")
@@ -57,6 +58,7 @@ function describe(bb: BbPluginApi, registry: Registry): string {
         : `  ${live.length} tool(s): `
           + live.map((tool) =>
             `${tool.registeredName}${tool.defaultEnabled ? "*" : ""}`
+            + `${tool.ask ? "?" : ""}`
             + `${drifted.has(tool.registeredName) ? "!" : ""}`).join(", "),
     );
     // A gateway tool's name says nothing about what it reaches. An agent sent
@@ -78,12 +80,19 @@ function describe(bb: BbPluginApi, registry: Registry): string {
       );
     }
     anyDefault ||= live.some((tool) => tool.defaultEnabled);
+    anyAsk ||= live.some((tool) => tool.ask);
     anyDrifted ||= drifted.size > 0;
   }
   // Without this an agent that finds itself holding a tool no project ever
   // bound has no way to learn where it came from.
   if (anyDefault) {
     lines.push("* on by default in every project that has not switched it off");
+  }
+  // The one fact an agent planning a sequence of calls most needs from this
+  // list, and the only one it could not get: which of them stop and wait for
+  // a human.
+  if (anyAsk) {
+    lines.push("? asks the user before it runs, and waits for their answer");
   }
   // An agent holding a tool whose description no longer matches the catalog
   // has no other way to find out, and the answer is never "sync again".
