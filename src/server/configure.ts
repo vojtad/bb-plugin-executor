@@ -66,41 +66,41 @@ export function buildInstructions(rows: readonly CatalogTool[]): string {
   const entries: string[] = [];
   for (const [serverId, tools] of byServer) {
     const reach = describeReach(tools);
-    if (reach.services.length > 0) {
-      // The tools that actually carry the reach, so an agent is pointed at a
-      // name it can load rather than at the whole server.
-      const doors = tools
-        .filter((tool) => describeReach([tool]).services.length > 0)
-        .map((tool) => tool.registeredName)
-        .sort();
+    if (reach.doors.length > 0) {
+      // Named against the tool that carries them, so an agent is pointed at a
+      // name it can load rather than at a server.
+      for (const door of reach.doors) {
+        entries.push(`- ${door.registeredName} reaches: ${door.services.join(", ")}.`);
+      }
+    } else if (reach.services.length > 0) {
+      // A portal names its upstreams in its tool names, so the services
+      // belong to the server rather than to any one tool.
       entries.push(
-        `- ${doors.join(", ")} (MCP server "${serverId}") reach: `
-        + `${reach.services.join(", ")}.`,
+        `- MCP server "${serverId}" reaches: ${reach.services.join(", ")}. Its tools `
+        + "are named <service>_<tool>.",
       );
     } else if (reach.discoverWith !== null) {
       entries.push(
-        `- MCP server "${serverId}" reaches servers this tool list does not name. `
-        + `Call ${reach.discoverWith} to find out which, before saying a service is `
-        + "unavailable.",
+        `- MCP server "${serverId}" reaches servers nothing here names. Call `
+        + `${reach.discoverWith} to find out which.`,
       );
     }
   }
   if (entries.length === 0) return "";
 
   const lines = [
-    "Some of your tools are gateways: one tool reaches many services that are "
-    + "not in your tool list under their own names. Before saying a service is "
-    + "unavailable, check this list.",
+    "Some of your tools are doors: one tool reaches many services that are not "
+    + "in your tool list under their own names. Check this before telling anyone "
+    + "a service is unavailable.",
     "",
     ...entries,
     "",
-    "Your provider may list these tools by name only and load the description "
-    + "when you search for it, and that search matches whole words - a query for "
-    + "\"notion\" need not reach a tool called `execute`. So load a gateway tool "
-    + "by its exact name rather than by keyword (in Claude Code, `ToolSearch` "
-    + "with `select:<name>`, where the name may carry your provider's prefix for "
-    + "BB tools, e.g. `select:mcp__bb-bridge__execute`), or run `bb mcp list` in "
-    + "a shell, which involves no search at all.",
+    "A keyword search will not find these - it matches whole words, and "
+    + "\"notion\" is not a hit for a tool called `execute`. Load a door by its "
+    + "exact name instead (Claude Code: `ToolSearch` with `select:<name>`, which "
+    + "may carry your provider's prefix for BB tools, e.g. "
+    + "`select:mcp__bb-bridge__execute`), or run `bb mcp list`, which does not "
+    + "search at all.",
   ];
   const text = lines.join("\n");
   return text.length <= MAX_INSTRUCTIONS ? text : `${text.slice(0, MAX_INSTRUCTIONS - 1)}\u2026`;

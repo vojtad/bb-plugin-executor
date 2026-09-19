@@ -21,38 +21,37 @@ expect but cannot find is not missing - it is off by default and not switched
 on here, switched off for this project, disabled, or from a server that was
 never synced. A tool you did not expect to have is one the user made a default
 everywhere. A name that is not in your list is off rather than hidden, and the
-fix is the MCP panel, not a workaround - unless it sits behind a gateway.
+fix is the MCP panel, not a workaround - unless it sits behind a door.
 
-## A gateway server's tools are a door, not the inventory
+## Some tools are doors
 
-Some servers contribute a few tools that reach a much larger set your catalog
-never sees. For a gateway, your tool list is the door, and no tool carries the
-service's name. So a tool list scanned for a Notion-shaped name says no every
-time, and saying so is wrong.
+A door is a tool that reaches services which are not in your tool list under
+their own names. Your instructions for this thread name every door you have
+and what each one reaches - read that list before telling anyone a service is
+unavailable. A tool list scanned for a Notion-shaped name says no every time,
+and saying so is wrong.
 
-There are two shapes, and they hide their contents differently.
+`bb mcp list` prints the same thing, and does not involve a search. The MCP
+panel shows it on each server's row, for the user.
 
-**Executor** contributes seven tools, of which `execute` runs code against
-every integration the user connected there. The integrations are named in
-`execute`'s own description, as a bullet list of slugs. So "Can you use
-Notion?" is answerable by reading a description you already have.
+Three ways a door can present itself:
 
-**A Cloudflare MCP portal** puts several MCP servers behind one endpoint. Its
-upstream tools normally arrive namespaced as `<server>_<tool>` -
-`github_list_issues` - so the server ids are visible in the names themselves.
-But a portal can also run in **code mode**, where every upstream tool is
-replaced by `portal_codemode_search` and `portal_codemode_execute`, and then
-nothing static names the upstreams at all:
-
-- Call `portal_list_servers` to find out which servers are behind it. This is
-  the only way; there is nothing to read.
-- Use `portal_codemode_search` to find a tool, then `portal_codemode_execute`
-  to run it, writing JavaScript against the `codemode.<tool>` proxy.
-- An upstream server may need its own sign-in, separately from the portal's.
-  That is done by the user in Cloudflare, not by you.
-
-`bb mcp list` prints what each gateway reaches, and says when the answer is a
-tool to call instead. The MCP panel shows the same thing on the server's row.
+1. **It names its services in its own description.** Executor's `execute` does
+   this: a bullet list of integrations. So "Can you use Notion?" is answerable
+   from a description you already have.
+2. **It names them in the tool names.** A Cloudflare MCP portal forwards each
+   upstream server's tools as `<server>_<tool>` - `github_list_issues` - so
+   the services are visible in your tool list, just not as tools of their own.
+3. **It names them nowhere, and you have to ask.** A portal in code mode
+   replaces every upstream tool with `portal_codemode_search` and
+   `portal_codemode_execute`. Then:
+   - Call `portal_list_servers` to learn which servers are behind it. There is
+     nothing to read; this is the only way.
+   - Use `portal_codemode_search` to find a tool, then
+     `portal_codemode_execute` to run it, writing JavaScript against the
+     `codemode.<tool>` proxy.
+   - An upstream server may need its own sign-in, separately from the
+     portal's. The user does that in Cloudflare, not you.
 
 ## Your provider may be holding the description back
 
@@ -66,8 +65,8 @@ So a search that found nothing is not an answer about what you can do:
 - Load the tool by exact name instead of by keyword. In Claude Code that is
   `ToolSearch` with `select:<name>`, and the name may carry your provider's
   own prefix for BB tools: `select:mcp__bb-bridge__execute`.
-- Or run `bb mcp list`, which involves no search at all. It also prints, per
-  gateway tool, the services that tool reaches.
+- Or run `bb mcp list`, which involves no search at all. It also prints what
+  each door reaches.
 - Another MCP server failing to connect says nothing about these tools. This
   plugin's tools reach you as ordinary provider tools, so a connection error
   about some server in your provider's own MCP list is about that server

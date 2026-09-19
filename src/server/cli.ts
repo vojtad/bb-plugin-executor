@@ -8,7 +8,7 @@
 // OAuth flow, and neither belongs to an agent.
 import type { BbPluginApi, PluginCliResult } from "@get-bb/plugin-sdk";
 import type { Registry } from "../storage/registry.js";
-import { describeReach, gatewayIntegrations } from "./gateway.js";
+import { describeReach } from "./gateway.js";
 import { driftedToolNames } from "./tools.js";
 
 export interface CliDeps {
@@ -51,17 +51,17 @@ function describe(bb: BbPluginApi, registry: Registry): string {
     );
     // A gateway tool's name says nothing about what it reaches. An agent sent
     // here to find out whether it can touch Notion has to be able to read the
-    // answer off this list.
-    for (const tool of live) {
-      const integrations = gatewayIntegrations(tool.description);
-      if (integrations.length > 0) {
-        lines.push(`  ${tool.registeredName} reaches: ${integrations.join(", ")}`);
-      }
-    }
-    // A Cloudflare portal forwards each upstream server's tools under that
-    // server's id, and in code mode names none of them at all - so the list
-    // above finds nothing and the answer is a tool to call.
+    // answer off this list - in the same words the panel uses, from the same
+    // function, or the two disagree in front of the same user.
     const reach = describeReach(live);
+    for (const door of reach.doors) {
+      lines.push(`  ${door.registeredName} reaches: ${door.services.join(", ")}`);
+    }
+    // A portal names its upstreams in the tool names rather than in any one
+    // description, so it has services but no door to attribute them to.
+    if (reach.doors.length === 0 && reach.services.length > 0) {
+      lines.push(`  reaches: ${reach.services.join(", ")}`);
+    }
     if (reach.discoverWith !== null) {
       lines.push(
         `  reaches servers this catalog cannot see - run ${reach.discoverWith} to list them`,

@@ -67,24 +67,25 @@ describe("gateway instructions", () => {
  */
 describe("what a cloudflare portal reaches", () => {
   const codeMode = [
-    { upstreamName: "portal_codemode_search", description: "Search available tools." },
-    { upstreamName: "portal_codemode_execute", description: "Execute tool calls." },
-    { upstreamName: "portal_list_servers", description: "Lists all available upstream MCP servers." },
+    { registeredName: "portal_codemode_search", upstreamName: "portal_codemode_search", description: "Search available tools." },
+    { registeredName: "portal_codemode_execute", upstreamName: "portal_codemode_execute", description: "Execute tool calls." },
+    { registeredName: "portal_list_servers", upstreamName: "portal_list_servers", description: "Lists all available upstream MCP servers." },
   ];
 
   it("reads the upstream servers off namespaced tool names", () => {
     // `<serverId>_<originalName>`, split on the first underscore - which is
     // why Cloudflare forbids underscores in a server id.
     expect(describeReach([
-      { upstreamName: "github_list_issues", description: "" },
-      { upstreamName: "github_create_issue", description: "" },
-      { upstreamName: "notion_search", description: "" },
-      { upstreamName: "portal_list_servers", description: "" },
+      { registeredName: "github_list_issues", upstreamName: "github_list_issues", description: "" },
+      { registeredName: "github_create_issue", upstreamName: "github_create_issue", description: "" },
+      { registeredName: "notion_search", upstreamName: "notion_search", description: "" },
+      { registeredName: "portal_list_servers", upstreamName: "portal_list_servers", description: "" },
     ]).services).toEqual(["github", "notion"]);
   });
 
   it("names a tool to call when code mode hides them all", () => {
     expect(describeReach(codeMode)).toEqual({
+      doors: [],
       services: [],
       discoverWith: "portal_list_servers",
     });
@@ -97,12 +98,12 @@ describe("what a cloudflare portal reaches", () => {
       syncedAt: index,
     })));
     expect(text).toContain("portal_list_servers");
-    expect(text).toMatch(/before saying a service is/i);
+    expect(text).toMatch(/before telling anyone a service is unavailable/i);
   });
 
   it("has nothing to say about a server that hides nothing", () => {
     expect(describeReach([
-      { upstreamName: "search", description: "Search Notion pages." },
-    ])).toEqual({ services: [], discoverWith: null });
+      { registeredName: "search", upstreamName: "search", description: "Search Notion pages." },
+    ])).toEqual({ doors: [], services: [], discoverWith: null });
   });
 });

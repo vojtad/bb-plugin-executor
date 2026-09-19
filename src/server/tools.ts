@@ -7,7 +7,7 @@ import type {
 import type { ClientPool } from "../mcp/client-pool.js";
 import { isUnauthorized } from "../oauth/flow.js";
 import type { CatalogTool, Registry } from "../storage/registry.js";
-import { integrationSearchTerms } from "./gateway.js";
+import { describeReach } from "./gateway.js";
 import { warnQuietly } from "./log.js";
 
 /** How long one upstream tool call may run before the pool aborts it. */
@@ -140,9 +140,12 @@ export function registrationDescription(row: CatalogTool): string {
   const described = row.description.trim() === ""
     ? `The "${row.upstreamName}" tool from MCP server "${row.serverId}".`
     : row.description;
-  const terms = integrationSearchTerms(described);
-  if (terms.length === 0) return described;
-  return `${described}\n\nReaches: ${terms.join(", ")}.`;
+  // Only what this tool's own description names. A portal's
+  // `github_list_issues` already carries "github" in its name, so there is
+  // nothing to add and adding it would cost every tool a repeated word.
+  const [door] = describeReach([{ ...row, description: described }]).doors;
+  if (door === undefined) return described;
+  return `${described}\n\nReaches: ${door.services.join(", ")}.`;
 }
 
 /**

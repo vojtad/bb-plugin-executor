@@ -129,17 +129,23 @@ nothing else; raising Grant session duration in Zero Trust is the fix.
 ## What a gateway reaches
 
 A row reading "Executor, 7 tools" answers none of the questions a user
-actually has, so the panel, `bb mcp list` and the agent instructions all say
-what is behind a gateway. Two ways of finding out, because gateways hide their
-contents differently:
+actually has. `describeReach` in `src/server/gateway.ts` is the one function
+that answers them, and four surfaces read it: the panel row, `bb mcp list`,
+the agent instructions, and the `Reaches:` line appended to a door's own
+registered description. One function because the alternative, which this was,
+is the CLI printing `notion_com` while the panel prints `notion` about the
+same server.
 
-- An Executor-style server lists its integrations as slugs inside one tool's
-  description; those are read out and repeated as words.
-- A Cloudflare portal forwards each upstream server's tools under that
-  server's id, so the ids are in the tool names. In code mode it names nothing
-  at all - and then the honest answer is a tool to call,
-  `portal_list_servers`, which is what all three surfaces say instead of
-  guessing.
+It returns three things, and a caller takes what it needs:
+
+- `doors` - the tools whose own description names what they reach, Executor
+  style. Only description-derived, so a portal's `github_list_issues` is not
+  told that it reaches "github".
+- `services` - everything reached, from descriptions and from a portal's
+  `<server>_<tool>` naming alike, as words.
+- `discoverWith` - a tool to call when nothing names them. A portal in code
+  mode replaces every upstream tool with `portal_codemode_*`, so the honest
+  answer is `portal_list_servers` rather than a guess or silence.
 
 ## Tools that changed
 

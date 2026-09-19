@@ -1,23 +1,35 @@
-// Reading the services a gateway tool reaches out of its own description.
+// What a server reaches beyond the tools it actually contributes.
 //
-// A gateway server contributes a few tools that reach a much larger set this
-// catalog never sees, and the only place the services behind it are named is
-// the gateway tool's description - as slugs, in a bullet list:
+// A gateway contributes a few tools that reach a much larger set this catalog
+// never sees, and the panel, `bb mcp list`, the agent instructions and the
+// registered tool description all have to say the same thing about it. So
+// there is exactly one function here that answers the question -
+// `describeReach` - and every surface takes the part of its answer it needs.
+// The alternative, which this file used to be, was three callers each parsing
+// descriptions their own way: the CLI printed `notion_com` while the panel
+// printed `notion`, about the same server, on the same screen.
 //
-//     ## Available integrations
-//     - `notion_com`
-//     - `slack_com`
+// Two shapes hide their contents differently, and a user should not have to
+// know which they have:
 //
-// A provider may not show the model that description at all. Claude Code
-// defers a plugin tool to a name-only entry and loads the description when
-// the model searches for it, and that search matches whole tokens: a query
-// for "notion" is not a hit for `notion_com`. So an agent asked to read a
-// Notion page searches, is told nothing matched, and reports that no MCP
-// server offers Notion - with `execute` in its tool list the whole time.
+//   Executor names its integrations inside one tool's description, as a
+//   bullet list of slugs:
 //
-// Splitting those slugs into words is the whole of the fix. It puts "notion"
-// in the description as a word the search can find, and it gives `bb mcp` a
-// list to print, so the shell route answers the question too.
+//       ## Available integrations
+//       - `notion_com`
+//       - `slack_com`
+//
+//   A Cloudflare portal forwards each upstream server's tools namespaced
+//   `<serverId>_<name>`, so the ids are in the tool names themselves - unless
+//   it runs in code mode, where `portal_codemode_*` replaces all of them and
+//   nothing static names the upstreams at all. Then the only honest answer is
+//   a tool to call.
+//
+// Why the slugs become words: a provider may defer a plugin tool to a
+// name-only entry and load its description only when the model searches for
+// it, and that search matches whole words. A query for "notion" is not a hit
+// for `notion_com`, so an agent asked to read a Notion page is told nothing
+// matched - with `execute` in its tool list the whole time.
 
 /** A bullet whose entire content is one backticked identifier. */
 const INTEGRATION_BULLET = /^\s*[-*]\s+`([A-Za-z0-9][A-Za-z0-9._-]*)`\s*$/;
@@ -32,26 +44,14 @@ const TRAILING_NOISE = new Set(["com", "io", "org", "net", "co", "ai", "dev", "a
 const MAX_INTEGRATIONS = 40;
 
 /**
- * The identifiers a gateway tool's description lists, in the order it lists
- * them.
- *
- * Deliberately narrow: it reads one markdown shape - a bullet list of bare
- * identifiers - and not prose. Harvesting every identifier in a description
- * would pull in `queryOptions` and `getNextPageParam` from any tool that
- * documents an API, which is noise in the description and noise in the
- * search. An ordinary tool yields nothing here, which is the right answer.
+ * Tools a portal contributes about ITSELF rather than about anything upstream.
+ * Cloudflare uses `portal` as the prefix for its own, so it is also a server
+ * id no upstream can have.
  */
-export function gatewayIntegrations(description: string): string[] {
-  const found: string[] = [];
-  for (const line of description.split("\n")) {
-    const match = INTEGRATION_BULLET.exec(line);
-    if (!match) continue;
-    const identifier = match[1];
-    if (!found.includes(identifier)) found.push(identifier);
-    if (found.length === MAX_INTEGRATIONS) break;
-  }
-  return found;
-}
+const PORTAL_PREFIX = "portal";
+
+/** The tool that answers "what is behind this portal" at runtime. */
+const PORTAL_LIST_SERVERS = "portal_list_servers";
 
 /** `notion_com` -> `notion`; `notion_private_mcp` -> `notion private mcp`. */
 export function integrationWords(identifier: string): string {
@@ -63,48 +63,37 @@ export function integrationWords(identifier: string): string {
 }
 
 /**
- * The services a gateway description names, as words, deduplicated.
+ * The services one tool's DESCRIPTION names, as words.
  *
- * Empty for a tool that lists nothing, and callers append nothing in that
- * case rather than a line that says none.
+ * Deliberately narrow: it reads one markdown shape - a bullet list of bare
+ * identifiers - and not prose. Harvesting every identifier in a description
+ * would pull in `queryOptions` and `getNextPageParam` from any tool that
+ * documents an API, which is noise in the description and noise in the
+ * search. An ordinary tool yields nothing, which is the right answer.
  */
-export function integrationSearchTerms(description: string): string[] {
-  const terms: string[] = [];
+function describedServices(description: string): string[] {
+  const services: string[] = [];
   const seen = new Set<string>();
-  for (const identifier of gatewayIntegrations(description)) {
-    const words = integrationWords(identifier);
+  for (const line of description.split("\n")) {
+    const match = INTEGRATION_BULLET.exec(line);
+    if (!match) continue;
+    const words = integrationWords(match[1]);
     const key = words.toLowerCase();
     if (words === "" || seen.has(key)) continue;
     seen.add(key);
-    terms.push(words);
+    services.push(words);
+    if (services.length === MAX_INTEGRATIONS) break;
   }
-  return terms;
+  return services;
 }
 
-
 /**
- * Tools a portal contributes about ITSELF rather than about anything upstream.
- * Cloudflare namespaces every upstream tool `<serverId>_<name>` and uses
- * `portal` as the prefix for its own, so this is also a reserved server id.
- */
-const PORTAL_PREFIX = "portal";
-
-/** The tool that answers "what is behind this portal" at runtime. */
-const PORTAL_LIST_SERVERS = "portal_list_servers";
-
-/**
- * The upstream server ids a Cloudflare MCP portal's own tool NAMES give away.
+ * The upstream server ids a portal's tool NAMES give away.
  *
- * A portal exposes each upstream server's tools namespaced as
- * `<serverId>_<originalName>`, split on the FIRST underscore - which is why
- * Cloudflare forbids underscores in a server id. So a portal that exposes its
- * upstreams directly names them in every tool it contributes, and no
- * description has to be parsed to find them.
- *
- * Empty for a portal in code mode, where the upstream tools are replaced
- * wholesale by `portal_codemode_*` and nothing static names them at all.
+ * Split on the FIRST underscore, which is why Cloudflare forbids underscores
+ * in a server id. Empty for a portal in code mode.
  */
-export function portalUpstreamIds(upstreamNames: readonly string[]): string[] {
+function namedServices(upstreamNames: readonly string[]): string[] {
   const found: string[] = [];
   for (const name of upstreamNames) {
     const separator = name.indexOf("_");
@@ -114,20 +103,32 @@ export function portalUpstreamIds(upstreamNames: readonly string[]): string[] {
     found.push(id);
     if (found.length === MAX_INTEGRATIONS) break;
   }
-  return found;
+  return found.map(integrationWords);
+}
+
+/** One tool, as much of it as reach depends on. */
+export interface ReachTool {
+  registeredName: string;
+  upstreamName: string;
+  description: string;
 }
 
 /** What a server reaches beyond the tools it actually contributes. */
 export interface ServerReach {
-  /** The services it reaches, as words, deduplicated and sorted. */
+  /**
+   * Tools whose own description names what they reach, and what each names.
+   *
+   * Only description-derived, never name-derived: a portal's
+   * `github_list_issues` already carries "github" in its name, and appending
+   * "Reaches: github" to it would spend tokens repeating the name back.
+   */
+  doors: Array<{ registeredName: string; services: string[] }>;
+  /** Everything reached, from both shapes, deduplicated and sorted. */
   services: string[];
   /**
-   * A tool to call when the services cannot be read statically, `null` when
-   * there is nothing more to find out.
-   *
-   * A Cloudflare portal in code mode is the case this exists for: its two
-   * `portal_codemode_*` tools reach every upstream server and name none of
-   * them, so the only way to learn what is behind it is to ask it.
+   * A tool to call when nothing static names them, `null` when there is
+   * nothing more to find out. A portal in code mode is the case this exists
+   * for: its two tools reach every upstream server and name none of them.
    */
   discoverWith: string | null;
 }
@@ -135,25 +136,26 @@ export interface ServerReach {
 /**
  * Everything one server's catalog says about what it reaches.
  *
- * Covers both shapes a gateway takes, because a user should not have to know
- * which they have: an Executor-style server that lists its integrations as
- * slugs inside one tool's description, and a Cloudflare portal that puts each
- * upstream server id in front of every tool name it forwards.
+ * The single source for every surface. Pass one tool to ask about that tool,
+ * a server's whole catalog to ask about the server.
  */
-export function describeReach(
-  tools: ReadonlyArray<{ upstreamName: string; description: string }>,
-): ServerReach {
+export function describeReach(tools: readonly ReachTool[]): ServerReach {
+  const doors: Array<{ registeredName: string; services: string[] }> = [];
   const services = new Set<string>();
   for (const tool of tools) {
-    for (const term of integrationSearchTerms(tool.description)) services.add(term);
+    const described = describedServices(tool.description);
+    if (described.length === 0) continue;
+    doors.push({ registeredName: tool.registeredName, services: described });
+    for (const service of described) services.add(service);
   }
-  for (const id of portalUpstreamIds(tools.map((tool) => tool.upstreamName))) {
-    services.add(integrationWords(id));
+  for (const service of namedServices(tools.map((tool) => tool.upstreamName))) {
+    services.add(service);
   }
-  const names = new Set(tools.map((tool) => tool.upstreamName));
   return {
+    doors,
     services: [...services].sort(),
-    discoverWith: services.size === 0 && names.has(PORTAL_LIST_SERVERS)
+    discoverWith: services.size === 0
+      && tools.some((tool) => tool.upstreamName === PORTAL_LIST_SERVERS)
       ? PORTAL_LIST_SERVERS
       : null,
   };

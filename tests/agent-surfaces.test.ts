@@ -134,9 +134,11 @@ describe("agent surfaces", () => {
     await active.harness.behavior.callRpc("catalog_sync", { serverId: "gateway" });
 
     // The shell route: `execute` says nothing about Notion, and the panel and
-    // the catalog show only the door.
+    // the catalog show only the door. In the same words the model is given
+    // and the panel renders - one function answers all three, so `notion_com`
+    // here and `notion` there is a state this cannot reach.
     const listed = await active.harness.behavior.runCli(["list"]);
-    expect(listed.stdout).toContain("execute reaches: notion_com, slack_com");
+    expect(listed.stdout).toContain("execute reaches: notion, slack");
 
     // The model's route, for a provider that only ever matches whole words.
     const registered = active.harness.inspection.registrations.agentTools;
