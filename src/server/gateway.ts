@@ -35,6 +35,18 @@
 const INTEGRATION_BULLET = /^\s*[-*]\s+`([A-Za-z0-9][A-Za-z0-9._-]*)`\s*$/;
 
 /**
+ * A prose line that names the services outright, comma separated.
+ *
+ * Cloudflare writes `Connected servers: Notion.` into a code-mode portal's
+ * tool description. Without this the portal looks like it names nothing, and
+ * every surface confidently told the user and the model to go and call
+ * `portal_list_servers` for an answer that was already on screen. Anchored to
+ * the start of a line and to a known label, because matching "servers:"
+ * anywhere in prose would harvest half of any tool that documents an API.
+ */
+const SERVICES_LINE = /^\s*(?:connected|available)\s+(?:servers|integrations)\s*:\s*(.+?)\.?\s*$/i;
+
+/**
  * Trailing segments that name where a service lives rather than the service.
  * Only ever dropped from the end, and never the last segment standing.
  */
@@ -74,15 +86,33 @@ export function integrationWords(identifier: string): string {
 function describedServices(description: string): string[] {
   const services: string[] = [];
   const seen = new Set<string>();
-  for (const line of description.split("\n")) {
-    const match = INTEGRATION_BULLET.exec(line);
-    if (!match) continue;
-    const words = integrationWords(match[1]);
+  const add = (identifier: string): boolean => {
+    const words = integrationWords(identifier);
     const key = words.toLowerCase();
-    if (words === "" || seen.has(key)) continue;
+    if (words === "" || seen.has(key)) return true;
     seen.add(key);
     services.push(words);
-    if (services.length === MAX_INTEGRATIONS) break;
+    return services.length < MAX_INTEGRATIONS;
+  };
+  for (const line of description.split("\n")) {
+    const bullet = INTEGRATION_BULLET.exec(line);
+    if (bullet) {
+      if (!add(bullet[1])) break;
+      continue;
+    }
+    const named = SERVICES_LINE.exec(line);
+    if (!named) continue;
+    let room = true;
+    for (const part of named[1].split(",")) {
+      const service = part.trim();
+      // A name with whitespace inside is already words, and passing it
+      // through `integrationWords` would only split it on punctuation it
+      // does not have.
+      if (service === "" || !/^[\w .-]+$/.test(service)) continue;
+      room = add(service);
+      if (!room) break;
+    }
+    if (!room) break;
   }
   return services;
 }

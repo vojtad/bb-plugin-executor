@@ -115,5 +115,13 @@ the user. Point them at the panel rather than attempting it.
 - **A tool that is stale** - the server no longer advertises it. A sync in the
   panel will clear it.
 
-Report these to the user as they are. None of them is retryable by calling the
-tool again.
+Report these to the user as they are. The only one worth a second call is a
+write that was refused for credentials, and only once: a 401 is refused before
+the tool runs, so nothing changed, and the failure drops the connection so the
+next call reconnects. Everything else on this list needs the user, not a
+retry.
+
+A call that TIMED OUT is not on this list, and is the one case to be careful
+with: the request was abandoned at this end, not cancelled at the other, so an
+upstream write may still land. Do not repeat a timed-out write - say what
+happened and let the user check.

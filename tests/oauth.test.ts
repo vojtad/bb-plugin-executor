@@ -585,12 +585,17 @@ describe("401 handling", () => {
     expect(failed(result)).toBe(true);
     expect(pool.callTool).toHaveBeenCalledTimes(1);
     expect(refreshAuth).not.toHaveBeenCalled();
-    // The failure the user sees has to explain itself: silence here reads as
+    // The failure the caller sees has to explain itself: silence here reads as
     // a broken plugin rather than a deliberate refusal to replay a write.
     const message = typeof result === "object" ? JSON.stringify(result.content) : "";
     expect(message).toContain("rejected the stored credentials");
     expect(message).toContain("not retried");
-    expect(message).toContain("try again");
+    // And it has to say why one more call is safe, rather than warning about
+    // duplicating the write and then asking for it again in the same breath.
+    // A 401 is refused at the auth layer before the tool runs, so this is the
+    // one failure that cannot have half-happened.
+    expect(message).toContain("nothing ran and nothing was changed");
+    expect(message).not.toContain("could duplicate");
   });
 
   it("does not retry a read-only tool when the refresh produced no new token", async () => {

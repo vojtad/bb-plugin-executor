@@ -383,17 +383,22 @@ export function createMcpExecutor(deps: {
           + storedReason(server.id),
         );
       }
-      // A write that hit a 401 falls through the branch above by design. It
-      // still deserves better than the generic transport error: the user
-      // needs to know it was not retried on purpose and that retrying is the
-      // right move, because the failure already dropped the cached client.
+      // A write that hit a 401 falls through the branch above by design, and
+      // the message has to say why calling it again is safe HERE without
+      // implying it is safe generally. A 401 is the server refusing the
+      // request at the auth layer, before any handler ran, so unlike a
+      // timeout or a dropped socket it is the one failure that cannot have
+      // half-happened. The previous wording said replaying could duplicate
+      // the change and then said to try again, which is advice a careful
+      // caller should refuse to follow.
       if (isUnauthorized(error) && !tool.readOnly) {
         return errorResult(
           `MCP server "${server.displayName}" rejected the stored credentials for `
-          + `"${tool.upstreamName}". This tool can change data, so it was not retried `
-          + "automatically - replaying it could duplicate the change. The cached "
-          + "connection was dropped; try again, and if that also fails ask the user "
-          + "to reconnect the server in the MCP panel."
+          + `"${tool.upstreamName}", so nothing ran and nothing was changed. This tool `
+          + "can change data, so it was not retried automatically. The rejected "
+          + "connection has been dropped, so calling it once more reconnects with "
+          + "fresh credentials - do that once, and if it fails again ask the user to "
+          + "reconnect the server in the MCP panel rather than repeating it."
           + storedReason(server.id),
         );
       }

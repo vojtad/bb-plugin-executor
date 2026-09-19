@@ -449,8 +449,11 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
     });
   };
 
-  const onTest = (server: McpServerDto): void => {
-    void mutate(async () => {
+  const onTest = async (server: McpServerDto): Promise<void> => {
+    // Awaited, not fired and forgotten: a button that resolves immediately
+    // renders its pending label for one frame, which is the same as not
+    // having one.
+    await mutate(async () => {
       const result = await rpcRef.current.call("servers_test", { id: server.id });
       setTests((current) => ({ ...current, [server.id]: result }));
     });
@@ -525,6 +528,8 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
               key={server.id}
               server={server}
               busy={busy}
+              error={error}
+              onOpenSettings={() => { setError(null); }}
               redirectUri={redirectUri}
               toolCount={tools.filter((tool) => tool.serverId === server.id && !tool.stale).length}
               test={tests[server.id] ?? null}
@@ -540,7 +545,7 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
                 return result;
               }}
               onConnect={() => { onConnect(server); }}
-              onTest={() => { onTest(server); }}
+              onTest={() => onTest(server)}
               onSaveOAuthClient={(client) => mutate(
                 () => rpcRef.current.call("servers_set_oauth_client", {
                   id: server.id, ...client,
@@ -1054,7 +1059,10 @@ function ServerRow(props: {
   redirectUri: string;
   onSync(): Promise<SyncResult | null>;
   onConnect(): void;
-  onTest(): void;
+  onTest(): Promise<void>;
+  /** The last failure, so the dialog can show its own actions' errors. */
+  error: string | null;
+  onOpenSettings(): void;
   onSaveOAuthClient(client: {
     clientId: string | null; clientSecret: string | null; scopes: string | null;
   }): Promise<boolean>;
@@ -1092,18 +1100,28 @@ function ServerRow(props: {
                 {server.authStatus === "disconnected" ? "Connect" : "Reconnect"}
               </Button>
             )
-          ) : (
-            <ActionButton
-              label="Test"
-              pendingLabel="Testing"
-              busy={props.busy}
-              run={async () => { props.onTest(); }}
-            />
-          )}
+          ) : null}
+          {/* Offered on every row, not only stdio. `servers_test` is just
+              `pool.listTools`, so it works for any transport - and a remote
+              server with a wrong URL, a dead host or a missing /mcp path had
+              no way at all to say so from its own row. */}
+          <ActionButton
+            label="Test"
+            pendingLabel="Testing"
+            variant="outline"
+            busy={props.busy}
+            run={props.onTest}
+          />
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setSettingsOpen(true); }}
+            onClick={() => {
+              // Cleared first: the dialog renders whatever is in `error`, and
+              // a failure from before it opened is not about anything the
+              // user is looking at.
+              props.onOpenSettings();
+              setSettingsOpen(true);
+            }}
           >
             Settings
           </Button>
@@ -1116,7 +1134,9 @@ function ServerRow(props: {
 
       {props.toolCount > 0 ? null : (
         <p className="mt-1 text-xs text-muted-foreground">
-          No tools read from this server yet - open Settings and press Sync tools.
+          {server.authStatus === "disconnected" && !isHeaderAuthenticated(server)
+            ? "No tools read from this server yet - press Connect to sign in first."
+            : "No tools read from this server yet - open Settings and press Sync tools."}
         </p>
       )}
 
@@ -1149,6 +1169,7 @@ function ServerRow(props: {
         <ServerSettings
           server={server}
           busy={props.busy}
+          error={props.error}
           redirectUri={props.redirectUri}
           onClose={() => { setSettingsOpen(false); }}
           onSync={props.onSync}
@@ -1192,6 +1213,12 @@ function ServerRow(props: {
 function ServerSettings(props: {
   server: McpServerDto;
   busy: boolean;
+  /**
+   * The last failure. Rendered HERE as well as on the page, because this is a
+   * modal: an error painted on the body behind it is an error nobody sees,
+   * and for a remote server this dialog is the only diagnostic path there is.
+   */
+  error: string | null;
   redirectUri: string;
   onClose(): void;
   onSync(): Promise<SyncResult | null>;
@@ -1223,6 +1250,11 @@ function ServerSettings(props: {
         </DialogHeader>
 
         <div className="max-h-[60vh] space-y-4 overflow-y-auto">
+          {props.error === null ? null : (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+              {props.error}
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <ActionButton
               label="Sync tools"

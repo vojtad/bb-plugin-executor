@@ -107,3 +107,31 @@ describe("what a cloudflare portal reaches", () => {
     ])).toEqual({ doors: [], services: [], discoverWith: null });
   });
 });
+
+describe("a portal that names its servers in prose", () => {
+  // Cloudflare writes this into a code-mode portal's tool description. Every
+  // surface used to tell the user and the model that the portal named nothing
+  // and to go and call `portal_list_servers` - for an answer already on
+  // screen.
+  const described = [{
+    registeredName: "portal_codemode_search",
+    upstreamName: "portal_codemode_search",
+    description: "Search available tools.\n\nConnected servers: Notion, Linear.\n",
+  }];
+
+  it("reads the services off the line", () => {
+    expect(describeReach(described).services).toEqual(["Linear", "Notion"]);
+  });
+
+  it("stops sending the caller to ask a question it can answer", () => {
+    expect(describeReach(described).discoverWith).toBeNull();
+  });
+
+  it("still asks when the description names nothing", () => {
+    expect(describeReach([{
+      registeredName: "portal_list_servers",
+      upstreamName: "portal_list_servers",
+      description: "Lists all available upstream MCP servers.",
+    }]).discoverWith).toBe("portal_list_servers");
+  });
+});
