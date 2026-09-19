@@ -31,8 +31,18 @@ The panel asks what you are adding, not how BB should speak to it:
 
 Each type shows only the fields it needs; headers, OAuth client credentials,
 environment and working directory sit behind one Advanced disclosure. A
-server's row carries one action - Connect, Reconnect or Test - and everything
-else lives in its Settings dialog.
+server's row carries Connect/Reconnect, Test and Settings, and everything else
+lives in the Settings dialog: the name, the URL or command, the connection
+type, headers, the OAuth client, Sync, Disable and Remove.
+
+Editing is in-place and keeps the id, which is what this server's catalog rows,
+every project's bindings and its stored credentials are filed under. So a
+renamed or re-hosted server keeps all three, where removing and re-adding
+loses them. A kind may move between the remote shapes freely and never across
+the local/remote line, because the fields do not carry over.
+
+Disable is the middle ground between working and gone: the server keeps its
+catalog, its bindings and its sign-in, and contributes no tools.
 
 `kind` is stored, but nothing branches on it: a gateway is Streamable HTTP like
 any other remote server, and gateway behaviour is still DETECTED from a tool's
@@ -108,6 +118,27 @@ different redirect URI. That is free under dynamic client registration and not
 free for a client you created by hand, where both URIs have to be listed in the
 provider. The Settings dialog shows the URI this browser would use next to the
 one the stored client was registered with, and says so when they differ.
+
+## When a server stops working
+
+Two different failures, kept apart because they need different repairs.
+
+A refused refresh, or a 401 that survives one, is an **auth error**: the
+credentials are dead and the fix is to sign in again. A failed sync is a
+**sync error**: the server is unreachable, or answering 500, or the command is
+missing. The catalog is deliberately kept in that case - a server that is
+merely down should not lose its registrations - which is exactly why it has to
+be said out loud, or the row reads "Connected, 12 tools" from a cache for as
+long as the outage lasts.
+
+Both appear in the same places: a banner above the server list, the row
+itself, `bb mcp list` (which marks the tool list as cached), and
+`bb.status.needsConfiguration`, which reaches `bb plugin list` and the BB UI
+without the panel being open. Only the auth error offers Reconnect, because a
+new token cannot reach a host that is not answering.
+
+One honest wart: `needsConfiguration` has no clear - the SDK drops it on the
+next load and not before - so that line can outlive the fix. It says so.
 
 ## When credentials die
 
