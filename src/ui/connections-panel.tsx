@@ -134,6 +134,44 @@ type BindingState = "inherit" | "on" | "off";
  */
 const NO_OVERRIDES: ReadonlyMap<string, boolean> = new Map();
 
+/**
+ * A button whose label says what it is doing while it does it.
+ *
+ * The panel has one `busy` flag, which disables every control on the page for
+ * the duration of any one of them - so pressing Sync greys out Connect,
+ * Settings and every checkbox at once and nothing says why. Read as a freeze,
+ * which is what it looks like. This keeps the shared flag doing its job, and
+ * adds the one thing it cannot carry: which action the user is waiting on.
+ */
+function ActionButton(props: {
+  label: string;
+  pendingLabel: string;
+  busy: boolean;
+  variant?: "outline";
+  run(): Promise<unknown>;
+}): ReactElement {
+  const [pending, setPending] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant={props.variant}
+      disabled={props.busy || pending}
+      onClick={() => {
+        setPending(true);
+        void props.run().finally(() => { setPending(false); });
+      }}
+    >
+      {pending ? props.pendingLabel : props.label}
+    </Button>
+  );
+}
+
+/** What a sync found, for the one render that reports it. */
+interface SyncResult {
+  added: string[];
+  total: number;
+}
+
 interface TestResult {
   ok: boolean;
   toolCount: number;
@@ -491,11 +529,15 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
               toolCount={tools.filter((tool) => tool.serverId === server.id && !tool.stale).length}
               test={tests[server.id] ?? null}
               onSync={async () => {
-                const ok = await mutate(
-                  () => rpcRef.current.call("catalog_sync", { serverId: server.id }),
-                );
+                // The counts the RPC already returns. Without them a sync that
+                // worked and a sync that found nothing look identical: the
+                // dialog stays open and nothing on screen moves.
+                let result: SyncResult | null = null;
+                const ok = await mutate(async () => {
+                  result = await rpcRef.current.call("catalog_sync", { serverId: server.id });
+                });
                 if (ok) clearTest(server.id);
-                return ok;
+                return result;
               }}
               onConnect={() => { onConnect(server); }}
               onTest={() => { onTest(server); }}
@@ -1010,7 +1052,7 @@ function ServerRow(props: {
   busy: boolean;
   /** The callback URL this server's OAuth client has to be told about. */
   redirectUri: string;
-  onSync(): Promise<boolean>;
+  onSync(): Promise<SyncResult | null>;
   onConnect(): void;
   onTest(): void;
   onSaveOAuthClient(client: {
@@ -1051,9 +1093,12 @@ function ServerRow(props: {
               </Button>
             )
           ) : (
-            <Button size="sm" disabled={props.busy} onClick={props.onTest}>
-              Test
-            </Button>
+            <ActionButton
+              label="Test"
+              pendingLabel="Testing"
+              busy={props.busy}
+              run={async () => { props.onTest(); }}
+            />
           )}
           <Button
             variant="ghost"
@@ -1068,6 +1113,12 @@ function ServerRow(props: {
       <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
         {describeTransport(server)}
       </p>
+
+      {props.toolCount > 0 ? null : (
+        <p className="mt-1 text-xs text-muted-foreground">
+          No tools read from this server yet - open Settings and press Sync tools.
+        </p>
+      )}
 
       {/* A gateway's tool count says nothing about what it can touch: the
           services are named inside one tool's description, or in front of
@@ -1143,7 +1194,7 @@ function ServerSettings(props: {
   busy: boolean;
   redirectUri: string;
   onClose(): void;
-  onSync(): Promise<boolean>;
+  onSync(): Promise<SyncResult | null>;
   onSaveHeaders(headers: Record<string, string>): Promise<boolean>;
   onSaveOAuthClient(client: {
     clientId: string | null; clientSecret: string | null; scopes: string | null;
@@ -1158,6 +1209,7 @@ function ServerSettings(props: {
   const [clientSecret, setClientSecret] = useState("");
   const [scopes, setScopes] = useState(server.oauthScopes ?? "");
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [synced, setSynced] = useState<SyncResult | null>(null);
   const remote = server.transport === "http";
 
   return (
@@ -1172,16 +1224,19 @@ function ServerSettings(props: {
 
         <div className="max-h-[60vh] space-y-4 overflow-y-auto">
           <div className="flex items-center gap-2">
-            <Button
+            <ActionButton
+              label="Sync tools"
+              pendingLabel="Syncing"
               variant="outline"
-              size="sm"
-              disabled={props.busy}
-              onClick={() => { void props.onSync(); }}
-            >
-              Sync tools
-            </Button>
+              busy={props.busy}
+              run={async () => { setSynced(await props.onSync()); }}
+            />
             <span className="text-xs text-muted-foreground">
-              Re-reads the server&apos;s tool list and registers anything new.
+              {synced === null
+                ? "Re-reads the server's tool list and registers anything new."
+                : synced.added.length === 0
+                  ? `${synced.total} tool(s), nothing new.`
+                  : `Added ${synced.added.length}: ${synced.added.join(", ")}.`}
             </span>
           </div>
 

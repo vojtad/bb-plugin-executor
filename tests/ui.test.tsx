@@ -1007,3 +1007,63 @@ describe("what a server reaches", () => {
     expect(view.queryByText(/Reaches:/)).toBeNull();
   });
 });
+
+/**
+ * Telling the user what just happened.
+ *
+ * The panel had one `busy` flag and threw away every result: pressing Sync
+ * greyed out every control on the page, said nothing about which action was
+ * running, and reported neither what it found nor that it had finished.
+ */
+describe("feedback on an action", () => {
+  it("says what a sync added", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({ servers: [httpServer()] }),
+        catalog_sync: () => ({ added: ["notion_search"], total: 4 }),
+      }),
+    });
+    await userEvent.click(await view.findByRole("button", { name: "Settings" }));
+    await userEvent.click(await view.findByRole("button", { name: "Sync tools" }));
+    expect(await view.findByText(/Added 1: notion_search/)).toBeDefined();
+  });
+
+  it("says so when a sync found nothing new", async () => {
+    // Distinguishable from a sync that failed, which is the whole point: both
+    // used to leave the dialog exactly as it was.
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({ servers: [httpServer()] }),
+        catalog_sync: () => ({ added: [], total: 4 }),
+      }),
+    });
+    await userEvent.click(await view.findByRole("button", { name: "Settings" }));
+    await userEvent.click(await view.findByRole("button", { name: "Sync tools" }));
+    expect(await view.findByText(/nothing new/)).toBeDefined();
+  });
+
+  it("points a server with no tools at the button that fixes it", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({ servers: [httpServer()] }),
+        tools_list: () => ({ tools: [] }),
+      }),
+    });
+    expect(await view.findByText(/No tools read from this server yet/)).toBeDefined();
+  });
+
+  it("says nothing of the sort once a server has tools", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({ servers: [httpServer()] }),
+        tools_list: () => ({ tools: [tool()] }),
+      }),
+    });
+    expect(await view.findByText("Notion")).toBeDefined();
+    expect(view.queryByText(/No tools read from this server yet/)).toBeNull();
+  });
+});

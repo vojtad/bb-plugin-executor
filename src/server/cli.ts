@@ -43,7 +43,12 @@ function describe(bb: BbPluginApi, registry: Registry): string {
     }
     lines.push(
       live.length === 0
-        ? "  no tools discovered yet - press Test in the MCP panel"
+        // Named per transport: Test only exists for a local server, and a
+        // remote one - which is what is usually in this state - would be sent
+        // looking for a button that is not on its row.
+        ? `  no tools discovered yet - open this server's Settings in the MCP `
+          + `panel and press Sync tools${server.transport === "http"
+            ? ", or Connect if it has never been signed in to" : ""}`
         : `  ${live.length} tool(s): `
           + live.map((tool) =>
             `${tool.registeredName}${tool.defaultEnabled ? "*" : ""}`
