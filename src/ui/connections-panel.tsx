@@ -85,6 +85,16 @@ const KINDS: ReadonlyArray<{
     namePlaceholder: "Executor",
     urlPlaceholder: "https://executor.example.com/mcp",
   },
+  {
+    value: "cloudflare-portal",
+    label: "Cloudflare MCP portal",
+    hint: "Several MCP servers behind one Cloudflare Access endpoint. Upstream tools "
+      + "arrive namespaced as <server>_<tool>, unless the portal runs in code mode, "
+      + "where two portal_codemode_ tools reach all of them instead. Each upstream "
+      + "server may also ask you to sign in to it separately, in Cloudflare.",
+    namePlaceholder: "Portal",
+    urlPlaceholder: "https://portal.example.com/mcp",
+  },
 ];
 
 /**
@@ -1058,6 +1068,22 @@ function ServerRow(props: {
       <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
         {describeTransport(server)}
       </p>
+
+      {/* A gateway's tool count says nothing about what it can touch: the
+          services are named inside one tool's description, or in front of
+          every forwarded tool name, and neither is visible in a list of
+          seven rows. This is the answer to "can I use Notion from here". */}
+      {server.reaches.length === 0 ? null : (
+        <p className="mt-1 text-xs text-muted-foreground">
+          <span className="text-foreground">Reaches:</span> {server.reaches.join(", ")}
+        </p>
+      )}
+      {server.reachesDiscoverWith === null ? null : (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Reaches other servers this catalog cannot see. Ask an agent to run{" "}
+          <code className="font-mono">{server.reachesDiscoverWith}</code> to list them.
+        </p>
+      )}
 
       {server.authError === null ? null : (
         <p className="mt-2 text-xs text-destructive">{server.authError.message}</p>

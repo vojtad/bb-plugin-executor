@@ -1,6 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { CatalogTool, Registry } from "../storage/registry.js";
-import { integrationSearchTerms } from "./gateway.js";
+import { describeReach } from "./gateway.js";
 import { warnQuietly } from "./log.js";
 
 /**
@@ -40,46 +40,59 @@ export interface Selection {
  * What to tell an agent about the gateway servers it has tools from.
  *
  * A gateway contributes a handful of tools that reach a much larger set the
- * catalog never sees, and the services behind it are named only inside one
- * tool's description - which a provider may never show the model. Claude Code
- * lists a plugin tool by name and loads its description only on a keyword
- * search, and that search matches whole words, so an agent asked about Notion
- * searches, finds nothing, and reports that nothing offers Notion while the
- * tool that reaches it sits in its own tool list.
+ * catalog never sees. Claude Code lists a plugin tool by name and loads its
+ * description only on a keyword search that matches whole words, so an agent
+ * asked about Notion searches, finds nothing, and reports that nothing offers
+ * Notion while the tool that reaches it sits in its own tool list.
  *
- * This is the fix that does not depend on the user having written anything:
- * the integrations are stated up front, as words, with the exact-name load
- * that retrieves the real description.
+ * Two shapes, and the difference matters to what can be said. An
+ * Executor-style server names its integrations statically, so they are stated
+ * outright. A Cloudflare portal in code mode names none of them anywhere -
+ * the only way to learn what is behind it is to call `portal_list_servers` -
+ * so the instruction is to ask it rather than to conclude anything.
+ *
+ * Either way this is the fix that does not depend on the user having written
+ * anything in their own custom instructions.
  */
 export function buildInstructions(rows: readonly CatalogTool[]): string {
-  const gateways = new Map<string, { tools: string[]; reaches: Set<string> }>();
+  const byServer = new Map<string, CatalogTool[]>();
   for (const row of rows) {
     if (row.stale) continue;
-    const terms = integrationSearchTerms(row.description);
-    if (terms.length === 0) continue;
-    let entry = gateways.get(row.serverId);
-    if (entry === undefined) {
-      entry = { tools: [], reaches: new Set() };
-      gateways.set(row.serverId, entry);
-    }
-    entry.tools.push(row.registeredName);
-    for (const term of terms) entry.reaches.add(term);
+    const existing = byServer.get(row.serverId);
+    if (existing === undefined) byServer.set(row.serverId, [row]);
+    else existing.push(row);
   }
-  if (gateways.size === 0) return "";
+
+  const entries: string[] = [];
+  for (const [serverId, tools] of byServer) {
+    const reach = describeReach(tools);
+    if (reach.services.length > 0) {
+      // The tools that actually carry the reach, so an agent is pointed at a
+      // name it can load rather than at the whole server.
+      const doors = tools
+        .filter((tool) => describeReach([tool]).services.length > 0)
+        .map((tool) => tool.registeredName)
+        .sort();
+      entries.push(
+        `- ${doors.join(", ")} (MCP server "${serverId}") reach: `
+        + `${reach.services.join(", ")}.`,
+      );
+    } else if (reach.discoverWith !== null) {
+      entries.push(
+        `- MCP server "${serverId}" reaches servers this tool list does not name. `
+        + `Call ${reach.discoverWith} to find out which, before saying a service is `
+        + "unavailable.",
+      );
+    }
+  }
+  if (entries.length === 0) return "";
 
   const lines = [
     "Some of your tools are gateways: one tool reaches many services that are "
     + "not in your tool list under their own names. Before saying a service is "
     + "unavailable, check this list.",
     "",
-  ];
-  for (const [serverId, entry] of gateways) {
-    lines.push(
-      `- ${entry.tools.sort().join(", ")} (MCP server "${serverId}") reach: `
-      + `${[...entry.reaches].sort().join(", ")}.`,
-    );
-  }
-  lines.push(
+    ...entries,
     "",
     "Your provider may list these tools by name only and load the description "
     + "when you search for it, and that search matches whole words - a query for "
@@ -88,7 +101,7 @@ export function buildInstructions(rows: readonly CatalogTool[]): string {
     + "with `select:<name>`, where the name may carry your provider's prefix for "
     + "BB tools, e.g. `select:mcp__bb-bridge__execute`), or run `bb mcp list` in "
     + "a shell, which involves no search at all.",
-  );
+  ];
   const text = lines.join("\n");
   return text.length <= MAX_INSTRUCTIONS ? text : `${text.slice(0, MAX_INSTRUCTIONS - 1)}\u2026`;
 }

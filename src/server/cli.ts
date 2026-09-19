@@ -8,7 +8,7 @@
 // OAuth flow, and neither belongs to an agent.
 import type { BbPluginApi, PluginCliResult } from "@get-bb/plugin-sdk";
 import type { Registry } from "../storage/registry.js";
-import { gatewayIntegrations } from "./gateway.js";
+import { describeReach, gatewayIntegrations } from "./gateway.js";
 import { driftedToolNames } from "./tools.js";
 
 export interface CliDeps {
@@ -49,15 +49,23 @@ function describe(bb: BbPluginApi, registry: Registry): string {
             `${tool.registeredName}${tool.defaultEnabled ? "*" : ""}`
             + `${drifted.has(tool.registeredName) ? "!" : ""}`).join(", "),
     );
-    // A gateway tool's name says nothing about what it reaches, and the
-    // services behind it are named in its description and nowhere else. An
-    // agent sent here to find out whether it can touch Notion has to be able
-    // to read the answer off this list.
+    // A gateway tool's name says nothing about what it reaches. An agent sent
+    // here to find out whether it can touch Notion has to be able to read the
+    // answer off this list.
     for (const tool of live) {
       const integrations = gatewayIntegrations(tool.description);
       if (integrations.length > 0) {
         lines.push(`  ${tool.registeredName} reaches: ${integrations.join(", ")}`);
       }
+    }
+    // A Cloudflare portal forwards each upstream server's tools under that
+    // server's id, and in code mode names none of them at all - so the list
+    // above finds nothing and the answer is a tool to call.
+    const reach = describeReach(live);
+    if (reach.discoverWith !== null) {
+      lines.push(
+        `  reaches servers this catalog cannot see - run ${reach.discoverWith} to list them`,
+      );
     }
     anyDefault ||= live.some((tool) => tool.defaultEnabled);
     anyDrifted ||= drifted.size > 0;

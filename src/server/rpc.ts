@@ -10,6 +10,7 @@ import {
   transportForKind,
 } from "../../contract.js";
 import { alwaysAsks, type Catalog } from "../catalog.js";
+import { describeReach, type ServerReach } from "./gateway.js";
 import { warnQuietly } from "./log.js";
 import { describeParameters } from "./tool-details.js";
 import { driftedToolNames } from "./tools.js";
@@ -34,6 +35,7 @@ function toServerDto(
   record: ServerRecord,
   authStatus: McpAuthStatus | null,
   registeredRedirectUri: string | null,
+  reach: ServerReach,
 ): McpServerDto {
   return {
     id: record.id,
@@ -57,6 +59,8 @@ function toServerDto(
     hasOauthClientSecret: record.oauthClientSecret !== null
       && record.oauthClientSecret !== "",
     oauthScopes: record.oauthScopes,
+    reaches: reach.services,
+    reachesDiscoverWith: reach.discoverWith,
     authError: record.authError === null
       ? null
       : { message: record.authError, at: record.authErrorAt ?? 0 },
@@ -171,6 +175,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       record,
       record.transport === "http" ? deps.oauth.status(record.id) : null,
       record.transport === "http" ? deps.oauth.registeredRedirectUri(record.id) : null,
+      describeReach(deps.registry.listTools(record.id).filter((row) => !row.stale)),
     );
 
   const requireServer = (id: string): ServerRecord => {

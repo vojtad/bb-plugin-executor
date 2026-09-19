@@ -12,7 +12,7 @@ export type Transport = "stdio" | "http";
  * gateway is still DETECTED from its tool descriptions (see server/gateway.ts)
  * - so a row carrying the wrong kind is cosmetic, never a behaviour change.
  */
-export type ServerKind = "local" | "remote" | "gateway";
+export type ServerKind = "local" | "remote" | "gateway" | "cloudflare-portal";
 
 /** The kind an older row means, for one written before the column existed. */
 export function kindFromTransport(transport: Transport): ServerKind {

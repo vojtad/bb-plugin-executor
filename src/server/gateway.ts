@@ -80,3 +80,81 @@ export function integrationSearchTerms(description: string): string[] {
   }
   return terms;
 }
+
+
+/**
+ * Tools a portal contributes about ITSELF rather than about anything upstream.
+ * Cloudflare namespaces every upstream tool `<serverId>_<name>` and uses
+ * `portal` as the prefix for its own, so this is also a reserved server id.
+ */
+const PORTAL_PREFIX = "portal";
+
+/** The tool that answers "what is behind this portal" at runtime. */
+const PORTAL_LIST_SERVERS = "portal_list_servers";
+
+/**
+ * The upstream server ids a Cloudflare MCP portal's own tool NAMES give away.
+ *
+ * A portal exposes each upstream server's tools namespaced as
+ * `<serverId>_<originalName>`, split on the FIRST underscore - which is why
+ * Cloudflare forbids underscores in a server id. So a portal that exposes its
+ * upstreams directly names them in every tool it contributes, and no
+ * description has to be parsed to find them.
+ *
+ * Empty for a portal in code mode, where the upstream tools are replaced
+ * wholesale by `portal_codemode_*` and nothing static names them at all.
+ */
+export function portalUpstreamIds(upstreamNames: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const name of upstreamNames) {
+    const separator = name.indexOf("_");
+    if (separator <= 0) continue;
+    const id = name.slice(0, separator);
+    if (id === PORTAL_PREFIX || found.includes(id)) continue;
+    found.push(id);
+    if (found.length === MAX_INTEGRATIONS) break;
+  }
+  return found;
+}
+
+/** What a server reaches beyond the tools it actually contributes. */
+export interface ServerReach {
+  /** The services it reaches, as words, deduplicated and sorted. */
+  services: string[];
+  /**
+   * A tool to call when the services cannot be read statically, `null` when
+   * there is nothing more to find out.
+   *
+   * A Cloudflare portal in code mode is the case this exists for: its two
+   * `portal_codemode_*` tools reach every upstream server and name none of
+   * them, so the only way to learn what is behind it is to ask it.
+   */
+  discoverWith: string | null;
+}
+
+/**
+ * Everything one server's catalog says about what it reaches.
+ *
+ * Covers both shapes a gateway takes, because a user should not have to know
+ * which they have: an Executor-style server that lists its integrations as
+ * slugs inside one tool's description, and a Cloudflare portal that puts each
+ * upstream server id in front of every tool name it forwards.
+ */
+export function describeReach(
+  tools: ReadonlyArray<{ upstreamName: string; description: string }>,
+): ServerReach {
+  const services = new Set<string>();
+  for (const tool of tools) {
+    for (const term of integrationSearchTerms(tool.description)) services.add(term);
+  }
+  for (const id of portalUpstreamIds(tools.map((tool) => tool.upstreamName))) {
+    services.add(integrationWords(id));
+  }
+  const names = new Set(tools.map((tool) => tool.upstreamName));
+  return {
+    services: [...services].sort(),
+    discoverWith: services.size === 0 && names.has(PORTAL_LIST_SERVERS)
+      ? PORTAL_LIST_SERVERS
+      : null,
+  };
+}

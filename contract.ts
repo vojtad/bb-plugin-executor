@@ -27,7 +27,7 @@ export type McpTransport = z.infer<typeof transportSchema>;
  * MCP server" are different things to the person adding one, and a form that
  * asks for a transport enum makes the user do that translation.
  */
-export const serverKindSchema = z.enum(["local", "remote", "gateway"]);
+export const serverKindSchema = z.enum(["local", "remote", "gateway", "cloudflare-portal"]);
 export type McpServerKind = z.infer<typeof serverKindSchema>;
 
 /** A gateway is a remote server; only a local command is stdio. */
@@ -176,6 +176,17 @@ export const serverSchema = z.object({
   hasOauthClientSecret: z.boolean(),
   /** The scope string exactly as the user typed it. */
   oauthScopes: z.string().nullable(),
+  /**
+   * The services this server reaches beyond the tools it contributes, as
+   * words, and the tool to ask when they cannot be read from the catalog.
+   *
+   * On the DTO because it is the single most useful thing a panel can say
+   * about a gateway and it was visible only in `bb mcp list`: a row reading
+   * "Executor, 7 tools" tells a user nothing about whether their Notion
+   * workspace is reachable from here.
+   */
+  reaches: z.array(z.string()),
+  reachesDiscoverWith: z.string().nullable(),
   /**
    * Why this server's credentials stopped working, and since when.
    *

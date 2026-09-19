@@ -78,7 +78,8 @@ function httpServer(overrides: Partial<McpServerDto> = {}): McpServerDto {
     url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
     cwd: null, enabled: true, createdAt: 1, authStatus: "disconnected",
     alwaysAsk: false, oauthClientId: null, hasOauthClientSecret: false,
-    oauthScopes: null, authError: null, registeredRedirectUri: null, ...overrides,
+    oauthScopes: null, authError: null, registeredRedirectUri: null,
+    reaches: [], reachesDiscoverWith: null, ...overrides,
   };
 }
 
@@ -89,6 +90,7 @@ function stdioServer(displayName: string, id = displayName.toLowerCase()): McpSe
     createdAt: 1, authStatus: null, alwaysAsk: false,
     oauthClientId: null, hasOauthClientSecret: false, oauthScopes: null,
     authError: null, registeredRedirectUri: null,
+    reaches: [], reachesDiscoverWith: null,
   };
 }
 
@@ -959,5 +961,49 @@ describe("drifted tools", () => {
     });
     expect(await view.findByText("Notion")).toBeDefined();
     expect(view.queryByRole("button", { name: "Reload plugin" })).toBeNull();
+  });
+});
+
+/**
+ * What a gateway reaches, on the row.
+ *
+ * A row reading "Executor, 7 tools" answers nothing a user actually asks: the
+ * services are named inside one tool's description or in front of every
+ * forwarded tool name, and until now both were visible only in `bb mcp list`.
+ */
+describe("what a server reaches", () => {
+  it("names the services on the row", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({
+          servers: [httpServer({ displayName: "Executor", reaches: ["notion", "slack"] })],
+        }),
+      }),
+    });
+    expect(await view.findByText(/notion, slack/)).toBeDefined();
+  });
+
+  it("names the tool to call when the catalog cannot see them", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({
+          servers: [httpServer({
+            displayName: "Portal", reaches: [], reachesDiscoverWith: "portal_list_servers",
+          })],
+        }),
+      }),
+    });
+    expect(await view.findByText("portal_list_servers")).toBeDefined();
+  });
+
+  it("stays quiet for an ordinary server", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({ servers_list: () => ({ servers: [httpServer()] }) }),
+    });
+    expect(await view.findByText("Notion")).toBeDefined();
+    expect(view.queryByText(/Reaches:/)).toBeNull();
   });
 });

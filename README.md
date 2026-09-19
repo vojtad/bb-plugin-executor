@@ -23,6 +23,11 @@ The panel asks what you are adding, not how BB should speak to it:
   handful of tools reach everything connected there, so the tool count stays
   small and the *descriptions* are what change as integrations are added -
   which is why the panel has a Reload button. See "Tools that changed".
+- **Cloudflare MCP portal** - several MCP servers behind one Cloudflare Access
+  endpoint. Upstream tools arrive namespaced `<server>_<tool>`, unless the
+  portal runs in code mode, where `portal_codemode_search` and
+  `portal_codemode_execute` replace all of them. Each upstream server may also
+  need its own sign-in, done in Cloudflare.
 
 Each type shows only the fields it needs; headers, OAuth client credentials,
 environment and working directory sit behind one Advanced disclosure. A
@@ -120,6 +125,21 @@ off to once an hour, and the message quotes what the authorization server
 actually said - plus, for a `*.cloudflareaccess.com` token endpoint, the
 setting that is really ending it. Reconnecting there buys another 24 hours and
 nothing else; raising Grant session duration in Zero Trust is the fix.
+
+## What a gateway reaches
+
+A row reading "Executor, 7 tools" answers none of the questions a user
+actually has, so the panel, `bb mcp list` and the agent instructions all say
+what is behind a gateway. Two ways of finding out, because gateways hide their
+contents differently:
+
+- An Executor-style server lists its integrations as slugs inside one tool's
+  description; those are read out and repeated as words.
+- A Cloudflare portal forwards each upstream server's tools under that
+  server's id, so the ids are in the tool names. In code mode it names nothing
+  at all - and then the honest answer is a tool to call,
+  `portal_list_servers`, which is what all three surfaces say instead of
+  guessing.
 
 ## Tools that changed
 

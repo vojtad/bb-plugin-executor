@@ -26,16 +26,33 @@ fix is the MCP panel, not a workaround - unless it sits behind a gateway.
 ## A gateway server's tools are a door, not the inventory
 
 Some servers contribute a few tools that reach a much larger set your catalog
-never sees. Executor is one: seven tools, of which `execute` runs code against
-every integration the user connected there. For a gateway, your tool list is
-the door and the integrations behind it are named in the gateway tool's own
-description. No tool carries the service's name.
+never sees. For a gateway, your tool list is the door, and no tool carries the
+service's name. So a tool list scanned for a Notion-shaped name says no every
+time, and saying so is wrong.
 
-So read the descriptions of the tools you do have before answering that a
-service is out of reach. "Can you use Notion?" is answerable from `execute`'s
-description, and a tool list scanned for a Notion-shaped name says no every
-time. `bb mcp list` prints what each gateway tool reaches, so a shell answers
-the same question.
+There are two shapes, and they hide their contents differently.
+
+**Executor** contributes seven tools, of which `execute` runs code against
+every integration the user connected there. The integrations are named in
+`execute`'s own description, as a bullet list of slugs. So "Can you use
+Notion?" is answerable by reading a description you already have.
+
+**A Cloudflare MCP portal** puts several MCP servers behind one endpoint. Its
+upstream tools normally arrive namespaced as `<server>_<tool>` -
+`github_list_issues` - so the server ids are visible in the names themselves.
+But a portal can also run in **code mode**, where every upstream tool is
+replaced by `portal_codemode_search` and `portal_codemode_execute`, and then
+nothing static names the upstreams at all:
+
+- Call `portal_list_servers` to find out which servers are behind it. This is
+  the only way; there is nothing to read.
+- Use `portal_codemode_search` to find a tool, then `portal_codemode_execute`
+  to run it, writing JavaScript against the `codemode.<tool>` proxy.
+- An upstream server may need its own sign-in, separately from the portal's.
+  That is done by the user in Cloudflare, not by you.
+
+`bb mcp list` prints what each gateway reaches, and says when the answer is a
+tool to call instead. The MCP panel shows the same thing on the server's row.
 
 ## Your provider may be holding the description back
 
