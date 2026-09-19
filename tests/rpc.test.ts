@@ -671,3 +671,73 @@ describe("rpc servers_set_oauth_client", () => {
       .toBeNull();
   });
 });
+
+/**
+ * Changing a server without destroying it.
+ *
+ * Before this existed, a typo in a URL cost a remove-and-re-add - which takes
+ * the tool catalog, every project's binding and the stored credentials with
+ * it. The id is what ties those three to the server, so it is derived once at
+ * creation and never again.
+ */
+describe("rpc servers_update", () => {
+  it("keeps the id when the display name changes", async () => {
+    const active = await load();
+    await addRemote(active, "Notion", "https://mcp.notion.com/mcp");
+    const { server } = await call(active, "servers_update", {
+      id: "notion", displayName: "Notion (work)",
+    });
+    expect(server).toMatchObject({ id: "notion", displayName: "Notion (work)" });
+  });
+
+  it("corrects a url in place", async () => {
+    const active = await load();
+    await addRemote(active, "Notion", "https://wrong.example/mcp");
+    await call(active, "servers_update", { id: "notion", url: "https://right.example/mcp" });
+    const { servers } = await call(active, "servers_list", null);
+    expect(servers[0].url).toBe("https://right.example/mcp");
+  });
+
+  it("moves between the two remote kinds, which cost nothing", async () => {
+    const active = await load();
+    await addRemote(active, "Portal", "https://portal.example/mcp");
+    const { server } = await call(active, "servers_update", {
+      id: "portal", kind: "cloudflare-portal" as const,
+    });
+    expect(server.kind).toBe("cloudflare-portal");
+    expect(server.transport).toBe("http");
+  });
+
+  it("refuses to turn a remote server into a local one", async () => {
+    // The fields do not carry over, so the result would be a record that
+    // cannot connect either way.
+    const active = await load();
+    await addRemote(active, "Notion", "https://mcp.notion.com/mcp");
+    await expect(call(active, "servers_update", {
+      id: "notion", kind: "local" as const,
+    })).rejects.toThrow(/remove it and add the new one/i);
+  });
+});
+
+describe("rpc servers_set_enabled", () => {
+  it("parks a server without losing its catalog or its bindings", async () => {
+    const active = await load();
+    await addEcho(active);
+    await call(active, "catalog_sync", { serverId: "echo" });
+    await call(active, "binding_set", {
+      projectId: "proj_a", registeredName: "echo", state: "on",
+    });
+
+    await call(active, "servers_set_enabled", { id: "echo", enabled: false });
+    const { servers } = await call(active, "servers_list", null);
+    expect(servers[0].enabled).toBe(false);
+    // Everything it had is still there, which is the whole difference between
+    // disabling a server and removing one.
+    expect((await call(active, "tools_list", {})).tools).not.toEqual([]);
+    expect((await call(active, "bindings_list", { projectId: "proj_a" })).overrides)
+      .toEqual([{ registeredName: "echo", enabled: true }]);
+
+    await call(active, "servers_set_enabled", { id: "echo", enabled: true });
+    expect((await call(active, "servers_list", null)).servers[0].enabled).toBe(true);
+  });
+});

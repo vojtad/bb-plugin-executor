@@ -384,6 +384,44 @@ export const rpcContract = defineRpcContract({
     input: z.object({ id: z.string(), headers: headersSchema }),
     output: okSchema,
   },
+  /**
+   * Change a server that already exists, without destroying it.
+   *
+   * The id is derived from the display name and is NOT re-derived here: it
+   * keys this server's catalog rows, every project binding that names one of
+   * its tools, and its stored credentials. Re-slugging on a rename would
+   * orphan all three, which is exactly the loss that removing and re-adding
+   * causes and that this call exists to avoid.
+   *
+   * `kind` may move between the two remote shapes freely - nothing branches
+   * on it - but never across the local/remote line, because the fields a
+   * local server needs are not the fields a remote one has.
+   */
+  servers_update: {
+    input: z.object({
+      id: z.string(),
+      displayName: z.string().trim().min(1).max(80).optional(),
+      kind: serverKindSchema.optional(),
+      url: z.url().optional(),
+      command: z.string().trim().min(1).optional(),
+      args: z.array(z.string()).optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      cwd: z.string().optional(),
+    }),
+    output: z.object({ server: serverSchema }),
+  },
+  /**
+   * Park a server without losing anything.
+   *
+   * A disabled server keeps its catalog, its bindings and its credentials and
+   * contributes no tools. Until now the column existed and was enforced in
+   * the selection, but nothing could set it - so the only way to quieten a
+   * server was to delete it and everything attached to it.
+   */
+  servers_set_enabled: {
+    input: z.object({ id: z.string(), enabled: z.boolean() }),
+    output: okSchema,
+  },
   servers_remove: {
     input: z.object({ id: z.string() }),
     output: z.object({ removed: z.boolean() }),
@@ -524,6 +562,9 @@ export const rpcContract = defineRpcContract({
   },
 });
 export type McpRpcContract = typeof rpcContract;
+
+/** What the panel sends to change a server that already exists. */
+export type McpServerUpdateInput = z.input<typeof rpcContract.servers_update.input>;
 
 /**
  * The renderer the consent prompt is drawn with.

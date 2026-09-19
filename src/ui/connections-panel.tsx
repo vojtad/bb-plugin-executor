@@ -43,6 +43,7 @@ import {
   type McpServerAddInput,
   type McpServerDto,
   type McpServerKind,
+  type McpServerUpdateInput,
   type McpToolDto,
 } from "../../contract.js";
 
@@ -560,6 +561,12 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
               onSaveHeaders={(headers) => mutate(
                 () => rpcRef.current.call("servers_set_headers", { id: server.id, headers }),
               )}
+              onSaveDetails={(details) => mutate(
+                () => rpcRef.current.call("servers_update", details),
+              )}
+              onSetEnabled={(enabled) => mutate(
+                () => rpcRef.current.call("servers_set_enabled", { id: server.id, enabled }),
+              )}
               onRemove={async () => {
                 const ok = await mutate(
                   () => rpcRef.current.call("servers_remove", { id: server.id }),
@@ -740,6 +747,11 @@ export function parseHeaders(text: string): Record<string, string> {
 }
 
 /** The inverse, for pre-filling the editor with what is already stored. */
+/** The inverse of {@link parseEnv}, so an edit starts from what is stored. */
+export function formatEnv(env: Record<string, string>): string {
+  return Object.entries(env).map(([key, value]) => `${key}=${value}`).join("\n");
+}
+
 export function formatHeaders(headers: Record<string, string>): string {
   return Object.entries(headers).map(([name, value]) => `${name}: ${value}`).join("\n");
 }
@@ -954,6 +966,143 @@ function AddServerForm(
 }
 
 /**
+ * Editing a server that already exists.
+ *
+ * The gap this fills: a typo in a URL, a host that moved, or a name you want
+ * to change used to cost a remove-and-re-add, which destroys the tool
+ * catalog, every project's binding and the stored credentials. The id is
+ * derived from the name at creation and deliberately never re-derived, so a
+ * rename here keeps all three attached.
+ */
+function ServerDetailsForm(props: {
+  server: McpServerDto;
+  busy: boolean;
+  onSave(details: McpServerUpdateInput): Promise<boolean>;
+}): ReactElement {
+  const { server } = props;
+  const [displayName, setDisplayName] = useState(server.displayName);
+  const [kind, setKind] = useState<McpServerKind>(server.kind);
+  const [url, setUrl] = useState(server.url ?? "");
+  const [command, setCommand] = useState(server.command ?? "");
+  const [args, setArgs] = useState(server.args.join(" "));
+  const [env, setEnv] = useState(() => formatEnv(server.env));
+  const [cwd, setCwd] = useState(server.cwd ?? "");
+  const local = server.transport === "stdio";
+  // Only the kinds that speak this server's transport: moving a local server
+  // to a remote one is a different server, and the RPC refuses it.
+  const kinds = KINDS.filter(
+    (entry) => (entry.value === "local") === local,
+  );
+
+  return (
+    <form
+      className="space-y-3 rounded-md border border-border bg-background p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const details: McpServerUpdateInput = { id: server.id, displayName: displayName.trim() };
+        if (kinds.length > 1) details.kind = kind;
+        if (local) {
+          details.command = command.trim();
+          details.args = args.trim().split(/\s+/).filter((part) => part.length > 0);
+          details.env = parseEnv(env);
+          details.cwd = cwd.trim();
+        } else {
+          details.url = url.trim();
+        }
+        void props.onSave(details);
+      }}
+    >
+      <div className="grid gap-1.5">
+        <Label htmlFor={`mcp-name-${server.id}`}>Name</Label>
+        <Input
+          id={`mcp-name-${server.id}`}
+          value={displayName}
+          onChange={(event) => { setDisplayName(event.target.value); }}
+        />
+        <p className="text-xs text-muted-foreground">
+          The id stays <span className="font-mono">{server.id}</span>: it is what
+          this server&apos;s tools and every project&apos;s choices are filed under.
+        </p>
+      </div>
+
+      {kinds.length > 1 ? (
+        <div className="grid gap-1.5">
+          <Label htmlFor={`mcp-kind-${server.id}`}>Connection type</Label>
+          <Select value={kind} onValueChange={(value) => { setKind(value as McpServerKind); }}>
+            <SelectTrigger id={`mcp-kind-${server.id}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {kinds.map((entry) => (
+                <SelectItem key={entry.value} value={entry.value}>{entry.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+
+      {local ? (
+        <>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`mcp-command-${server.id}`}>Command</Label>
+            <Input
+              id={`mcp-command-${server.id}`}
+              value={command}
+              onChange={(event) => { setCommand(event.target.value); }}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`mcp-args-${server.id}`}>Arguments</Label>
+            <Input
+              id={`mcp-args-${server.id}`}
+              value={args}
+              onChange={(event) => { setArgs(event.target.value); }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Separated by spaces; quoting is not supported. For an argument with
+              a space in it, put the value in Environment and have the command
+              read it, or point the command at a wrapper script.
+            </p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`mcp-env-edit-${server.id}`}>Environment</Label>
+            <Textarea
+              id={`mcp-env-edit-${server.id}`}
+              value={env}
+              rows={3}
+              onChange={(event) => { setEnv(event.target.value); }}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`mcp-cwd-edit-${server.id}`}>Working directory</Label>
+            <Input
+              id={`mcp-cwd-edit-${server.id}`}
+              value={cwd}
+              onChange={(event) => { setCwd(event.target.value); }}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="grid gap-1.5">
+          <Label htmlFor={`mcp-url-${server.id}`}>URL</Label>
+          <Input
+            id={`mcp-url-${server.id}`}
+            value={url}
+            onChange={(event) => { setUrl(event.target.value); }}
+          />
+          <p className="text-xs text-muted-foreground">
+            Changing the host does not move the sign-in: a token issued for the
+            old one is not sent to the new one, so connect again afterwards.
+          </p>
+        </div>
+      )}
+
+      <Button type="submit" size="sm" disabled={props.busy}>Save changes</Button>
+    </form>
+  );
+}
+
+/**
  * The OAuth client a user created by hand, and the redirect URI it has to be
  * told about.
  *
@@ -1083,6 +1232,8 @@ function ServerRow(props: {
     clientId: string | null; clientSecret: string | null; scopes: string | null;
   }): Promise<boolean>;
   onSaveHeaders(headers: Record<string, string>): Promise<boolean>;
+  onSaveDetails(details: McpServerUpdateInput): Promise<boolean>;
+  onSetEnabled(enabled: boolean): Promise<boolean>;
   onRemove(): Promise<boolean>;
 }): ReactElement {
   const { server, test } = props;
@@ -1198,6 +1349,8 @@ function ServerRow(props: {
           onSync={props.onSync}
           onSaveHeaders={props.onSaveHeaders}
           onSaveOAuthClient={props.onSaveOAuthClient}
+          onSaveDetails={props.onSaveDetails}
+          onSetEnabled={props.onSetEnabled}
           onRemove={props.onRemove}
         />
       ) : null}
@@ -1249,6 +1402,8 @@ function ServerSettings(props: {
   onSaveOAuthClient(client: {
     clientId: string | null; clientSecret: string | null; scopes: string | null;
   }): Promise<boolean>;
+  onSaveDetails(details: McpServerUpdateInput): Promise<boolean>;
+  onSetEnabled(enabled: boolean): Promise<boolean>;
   onRemove(): Promise<boolean>;
 }): ReactElement {
   const { server } = props;
@@ -1278,6 +1433,29 @@ function ServerSettings(props: {
               {props.error}
             </p>
           )}
+          <ServerDetailsForm
+            server={server}
+            busy={props.busy}
+            onSave={props.onSaveDetails}
+          />
+
+          <div className="flex items-center gap-2">
+            <ActionButton
+              label={server.enabled ? "Disable" : "Enable"}
+              pendingLabel={server.enabled ? "Disabling" : "Enabling"}
+              variant="outline"
+              busy={props.busy}
+              run={() => props.onSetEnabled(!server.enabled)}
+            />
+            <span className="text-xs text-muted-foreground">
+              {server.enabled
+                ? "Stop offering this server's tools without deleting anything - "
+                  + "its catalog, its project bindings and its sign-in all stay."
+                : "This server is disabled: it keeps everything it had and "
+                  + "contributes no tools."}
+            </span>
+          </div>
+
           <div className="flex items-center gap-2">
             <ActionButton
               label="Sync tools"

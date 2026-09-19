@@ -273,6 +273,53 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       return { ok: true };
     },
 
+    servers_update: async (input) => {
+      const server = requireServer(input.id);
+      const kind = input.kind ?? server.kind;
+      const transport = transportForKind(kind);
+      if (transport !== server.transport) {
+        // A local server has a command and a remote one has a url; there is
+        // no sensible carry-over, and silently keeping the old fields would
+        // leave a record that cannot connect either way.
+        throw new Error(
+          `MCP server "${server.id}" is a ${server.kind} server. Changing it to `
+          + `"${kind}" would change how BB talks to it, which is a different server - `
+          + "remove it and add the new one.",
+        );
+      }
+      const updated: ServerRecord = {
+        ...server,
+        // The id is deliberately NOT re-derived from a new display name: it
+        // keys the catalog, the bindings and the credentials.
+        displayName: input.displayName ?? server.displayName,
+        kind,
+        transport,
+        url: transport === "http" ? input.url ?? server.url : null,
+        command: transport === "stdio" ? input.command ?? server.command : null,
+        args: transport === "stdio" ? input.args ?? server.args : [],
+        env: transport === "stdio" ? input.env ?? server.env : {},
+        cwd: transport === "stdio"
+          ? (input.cwd === undefined ? server.cwd : input.cwd.trim() || null)
+          : null,
+      };
+      deps.registry.upsertServer(updated);
+      // A live connection was built from the old command or url.
+      await deps.dropClient(input.id);
+      changed();
+      return { server: describe(updated) };
+    },
+
+    servers_set_enabled: async (input) => {
+      const server = requireServer(input.id);
+      deps.registry.upsertServer({ ...server, enabled: input.enabled });
+      // Nothing is deleted: the catalog, the bindings and the credentials all
+      // stay, and the selection simply stops offering this server's tools.
+      if (!input.enabled) await deps.dropClient(input.id);
+      deps.onSelectionChanged();
+      changed();
+      return { ok: true };
+    },
+
     servers_remove: async (input) => {
       const existed = deps.registry.getServer(input.id) !== undefined;
       // Cascades to this server's catalog rows and their bindings. The tool

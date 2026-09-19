@@ -1148,3 +1148,55 @@ describe("a server whose last sync failed", () => {
     expect(view.getAllByRole("button", { name: "Reconnect" })).toHaveLength(2);
   });
 });
+
+describe("editing a server", () => {
+  it("corrects a url without removing anything", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({ servers: [httpServer()] }),
+        servers_update: () => ({ server: httpServer() }),
+      }),
+    });
+    await userEvent.click(await view.findByRole("button", { name: "Settings" }));
+    const url = await view.findByLabelText("URL");
+    await userEvent.clear(url);
+    await userEvent.type(url, "https://right.example/mcp");
+    await userEvent.click(view.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(view.inspection.rpcCalls.filter((entry) => entry.method === "servers_update"))
+        .toEqual([{
+          method: "servers_update",
+          input: { id: "notion", displayName: "Notion", kind: "remote",
+            url: "https://right.example/mcp" },
+        }]);
+    });
+  });
+
+  it("offers no local/remote switch, which the RPC would refuse", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({ servers_list: () => ({ servers: [stdioServer("Files", "files")] }) }),
+    });
+    await userEvent.click(await view.findByRole("button", { name: "Settings" }));
+    await view.findByLabelText("Command");
+    // Only one local kind exists, so the picker has nothing to offer.
+    expect(view.queryByLabelText("Connection type")).toBeNull();
+  });
+
+  it("parks a server instead of deleting it", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({ servers_list: () => ({ servers: [httpServer()] }) }),
+    });
+    await userEvent.click(await view.findByRole("button", { name: "Settings" }));
+    await userEvent.click(await view.findByRole("button", { name: "Disable" }));
+    await waitFor(() => {
+      expect(view.inspection.rpcCalls.filter((e) => e.method === "servers_set_enabled"))
+        .toEqual([{
+          method: "servers_set_enabled", input: { id: "notion", enabled: false },
+        }]);
+    });
+  });
+});
