@@ -7,6 +7,7 @@ import type {
 } from "@get-bb/plugin-sdk";
 import { CONSENT_RENDERER_ID, consentResponseSchema } from "../contract.js";
 import type { ToolExecutor } from "./server/tools.js";
+import { describeReach } from "./server/gateway.js";
 import type { CatalogTool } from "./storage/registry.js";
 
 /**
@@ -200,6 +201,8 @@ export function createConsentGate(deps: {
           toolName: tool.upstreamName,
           summary: summarizeArguments(args),
           destructive: !tool.readOnly,
+          // A door's grant is the whole door: see `reaches` on the payload.
+          reaches: describeReach([tool]).services,
         },
         timeoutMs,
         // Passed through even though a stopped thread already cancels the

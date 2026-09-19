@@ -116,13 +116,21 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
    */
   function reportConfiguration(): void {
     try {
-      const broken = registry.listServers().filter((server) => server.authError !== null);
+      const broken = registry.listServers().filter(
+        (server) => server.authError !== null || server.syncError !== null,
+      );
+      // `needsConfiguration` has no clear - the SDK drops it on the next load
+      // and not before - so a recovery cannot take the line back down. It is
+      // re-asserted while anything is still wrong, and the text says what to
+      // do about the stale case rather than pretending it cannot happen.
       if (broken.length === 0) return;
+      const named = broken.map((server) => server.displayName).join(", ");
       bb.status.needsConfiguration(
-        broken.length === 1
-          ? `MCP server "${broken[0].displayName}" needs reconnecting in the MCP panel.`
-          : `${broken.length} MCP servers need reconnecting in the MCP panel: `
-            + broken.map((server) => server.displayName).join(", "),
+        `${broken.length === 1
+          ? `MCP server "${named}" needs attention`
+          : `${broken.length} MCP servers need attention: ${named}`} `
+        + "- open the MCP panel. (This line clears when the plugin next "
+        + "reloads, so it can outlive the fix.)",
       );
     } catch {
       // Called from background work that can outlive the load; a status line

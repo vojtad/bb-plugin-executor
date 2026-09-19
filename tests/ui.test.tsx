@@ -78,7 +78,7 @@ function httpServer(overrides: Partial<McpServerDto> = {}): McpServerDto {
     url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
     cwd: null, enabled: true, createdAt: 1, authStatus: "disconnected",
     alwaysAsk: false, oauthClientId: null, hasOauthClientSecret: false,
-    oauthScopes: null, authError: null, registeredRedirectUri: null,
+    oauthScopes: null, authError: null, syncError: null, registeredRedirectUri: null,
     reaches: [], reachesDiscoverWith: null, ...overrides,
   };
 }
@@ -89,7 +89,7 @@ function stdioServer(displayName: string, id = displayName.toLowerCase()): McpSe
     args: ["-y", "server-filesystem"], env: {}, headers: {}, cwd: null, enabled: true,
     createdAt: 1, authStatus: null, alwaysAsk: false,
     oauthClientId: null, hasOauthClientSecret: false, oauthScopes: null,
-    authError: null, registeredRedirectUri: null,
+    authError: null, syncError: null, registeredRedirectUri: null,
     reaches: [], reachesDiscoverWith: null,
   };
 }
@@ -114,6 +114,7 @@ const payload: McpConsentPayload = {
   toolName: "gmail_send",
   summary: '{"to":"alice@example.com","subject":"Hi"}',
   destructive: true,
+  reaches: [],
 };
 
 function consentProps(
@@ -1065,5 +1066,85 @@ describe("feedback on an action", () => {
     });
     expect(await view.findByText("Notion")).toBeDefined();
     expect(view.queryByText(/No tools read from this server yet/)).toBeNull();
+  });
+});
+
+/**
+ * A grant on a door is wider than the generic wording admits.
+ *
+ * The allowance is remembered per tool NAME, and a door is one name for many
+ * services - so "with any arguments" is, for a door, "with any service".
+ */
+describe("consent for a door", () => {
+  it("names every service the grant would cover", async () => {
+    const captured = await app();
+    const view = renderSlot(
+      captured.pendingInteractions[0],
+      consentProps({
+        interaction: {
+          ...consentProps().interaction,
+          payload: { ...payload, toolName: "execute", reaches: ["gmail", "notion"] },
+        },
+      }),
+    );
+    expect(view.getByText(/gmail, notion/)).toBeDefined();
+  });
+
+  it("says nothing extra for an ordinary tool", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.pendingInteractions[0], consentProps());
+    expect(view.getByText(/not just the ones above/)).toBeDefined();
+    expect(view.queryByText(/every service it reaches/)).toBeNull();
+  });
+});
+
+/**
+ * A server that is authorized but unreachable.
+ *
+ * The catalog is deliberately kept when a sync fails, so the row would
+ * otherwise read "Connected, 12 tools" for as long as the server stayed
+ * broken - the cache presented as health.
+ */
+describe("a server whose last sync failed", () => {
+  const stale = httpServer({
+    authStatus: "connected",
+    syncError: { message: "answered https://x/mcp with HTTP 500", at: 5 },
+  });
+
+  it("says the tools are cached rather than current", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({ servers_list: () => ({ servers: [stale] }) }),
+    });
+    expect(await view.findByText(/cached rather than current/)).toBeDefined();
+    expect(view.getAllByText("Not responding").length).toBeGreaterThan(0);
+  });
+
+  it("does not offer Reconnect in the banner, which would not help", async () => {
+    // The repair for an unreachable host is not a new grant. The row keeps
+    // its own Reconnect - re-authorizing is always allowed - but the banner
+    // must not present it as the fix for this.
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({ servers_list: () => ({ servers: [stale] }) }),
+    });
+    expect(await view.findByText(/is not responding/)).toBeDefined();
+    expect(view.getAllByRole("button", { name: "Reconnect" })).toHaveLength(1);
+  });
+
+  it("does offer it for a dead grant, where it is the fix", async () => {
+    const captured = await app();
+    const view = renderSlot(captured.navPanels[0], { subPath: "" }, {
+      rpc: rpcHandlers({
+        servers_list: () => ({
+          servers: [httpServer({
+            authStatus: "needs-reconnect",
+            authError: { message: "Grant not found.", at: 5 },
+          })],
+        }),
+      }),
+    });
+    expect(await view.findByText(/needs reconnecting/)).toBeDefined();
+    expect(view.getAllByRole("button", { name: "Reconnect" })).toHaveLength(2);
   });
 });

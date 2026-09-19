@@ -48,7 +48,7 @@ function registry(): Registry {
     id: "echo", displayName: "Echo", transport: "stdio", kind: "local" as const, url: null,
     command: "node", args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
     oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null,
+    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
   });
   return store;
 }
@@ -239,7 +239,7 @@ describe("catalog tool registration across servers", () => {
         url: `https://${id}.test/mcp`,
         command: null, args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
         oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-        authError: null, authErrorAt: null,
+        authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
       });
     }
     return store;
@@ -313,7 +313,7 @@ describe("default-enabled tools", () => {
       id: "echo", displayName: "Echo", transport: "stdio", kind: "local" as const, url: null,
       command: "node", args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     return created;
   }
@@ -373,7 +373,7 @@ describe("default-enabled tools", () => {
       id: "echo", displayName: "Echo", transport: "stdio", kind: "local" as const, url: null,
       command: "node", args: [], env: {}, headers: {}, cwd: null, enabled: false, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     // The disabled flag was inert while every tool needed a per-project tick.
     // Leaking a disabled server's tools into every project is worse.

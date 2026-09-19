@@ -75,8 +75,12 @@ So a search that found nothing is not an answer about what you can do:
 ## Write tools ask the user first
 
 Every tool the server does not mark read-only prompts the user for
-confirmation before it runs, once per thread per tool. That prompt is not an
-error and not something to route around:
+confirmation before it runs. The user answers "Allow once", which covers only
+the call that asked, or "Always allow in this thread", which covers every
+later call to that tool until the thread ends. So do not plan a batch of
+writes as one prompt and then N-1 free calls; you may be asked every time.
+
+That prompt is not an error and not something to route around:
 
 - Wait for it. A prompt that is pending is not a failed call.
 - If the user declines, the call returns a refusal. Accept it, tell the user
@@ -84,7 +88,15 @@ error and not something to route around:
   unguarded tool that does the same thing, or split the write into smaller
   calls to slip under the prompt.
 - Read-only tools never prompt, so exploring is cheap. Prefer reading before
-  writing.
+  writing. A door is the exception: it is one tool that both reads and writes,
+  so every call through it asks, including a read.
+
+A grant on a door is wider than it looks. The allowance is remembered per TOOL
+NAME, and a door is one name for many services - so a user who allows
+`execute` for the rest of the thread in order to read a Notion page has also
+allowed it to send mail. Do not treat the prompt as a backstop once it has
+been granted: say what a door call is about to do before you make it, in the
+same turn, and stop if that is not what the user asked for.
 
 ## Seeing what is configured
 

@@ -58,7 +58,7 @@ export function ConsentPrompt(
     );
   }
 
-  const { serverName, toolName, summary, destructive } = parsed.data;
+  const { serverName, toolName, summary, destructive, reaches } = parsed.data;
 
   return (
     <div className="rounded-md border border-border bg-card p-3">
@@ -107,6 +107,18 @@ export function ConsentPrompt(
         &quot;Always allow&quot; covers every later call to{" "}
         <span className="font-mono">{toolName}</span> in this thread, with any
         arguments - not just the ones above.
+        {/*
+          For a door, "any arguments" is the choice of SERVICE. One tool
+          reaches many, so a grant given to read a page in one of them also
+          sends mail in another, and the generic sentence above reads as if
+          the blast radius were the shape of these particular arguments.
+        */}
+        {reaches.length === 0 ? null : (
+          <>
+            {" "}That is every service it reaches:{" "}
+            <span className="text-foreground">{reaches.join(", ")}</span>.
+          </>
+        )}
       </p>
     </div>
   );

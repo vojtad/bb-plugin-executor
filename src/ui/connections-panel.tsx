@@ -231,6 +231,10 @@ function describeTokens(tokens: number): string {
 }
 
 function describeStatus(server: McpServerDto): string {
+  // Ahead of everything, including "Local process": a server whose last sync
+  // failed has a catalog that is cached, not current, and the tool count
+  // beside this word would otherwise read as proof that it works.
+  if (server.syncError !== null) return "Not responding";
   if (server.transport === "stdio") return "Local process";
   // Ahead of every other answer: a recorded failure is the one fact about this
   // server worth reading, and a stale "Connected" over dead credentials is the
@@ -507,7 +511,9 @@ export function ConnectionsPanel(props: { subPath?: string }): ReactElement {
         )}
 
         <NeedsAttention
-          servers={(servers ?? []).filter((server) => server.authError !== null)}
+          servers={(servers ?? []).filter(
+            (server) => server.authError !== null || server.syncError !== null,
+          )}
           busy={busy}
           onConnect={onConnect}
         />
@@ -615,18 +621,28 @@ function NeedsAttention(props: {
         <div key={server.id} className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-destructive">
-              {server.displayName} needs reconnecting
+              {/* Two different repairs: a dead grant needs the user to sign
+                  in again, an unreachable server needs whatever is wrong with
+                  it fixed. Offering Reconnect for the second would be
+                  offering a button that cannot help. */}
+              {server.authError !== null
+                ? `${server.displayName} needs reconnecting`
+                : `${server.displayName} is not responding`}
             </span>
-            <Button
-              size="sm"
-              className="ml-auto"
-              disabled={props.busy}
-              onClick={() => { props.onConnect(server); }}
-            >
-              Reconnect
-            </Button>
+            {server.authError === null ? null : (
+              <Button
+                size="sm"
+                className="ml-auto"
+                disabled={props.busy}
+                onClick={() => { props.onConnect(server); }}
+              >
+                Reconnect
+              </Button>
+            )}
           </div>
-          <p className="text-xs text-muted-foreground">{server.authError?.message}</p>
+          <p className="text-xs text-muted-foreground">
+            {server.authError?.message ?? server.syncError?.message}
+          </p>
         </div>
       ))}
     </div>
@@ -1077,7 +1093,7 @@ function ServerRow(props: {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium text-foreground">{server.displayName}</span>
         <span
-          className={`text-xs ${server.authError === null
+          className={`text-xs ${server.authError === null && server.syncError === null
             ? "text-muted-foreground"
             : "text-destructive"}`}
         >
@@ -1158,6 +1174,13 @@ function ServerRow(props: {
 
       {server.authError === null ? null : (
         <p className="mt-2 text-xs text-destructive">{server.authError.message}</p>
+      )}
+      {/* Only when there is no auth error to show: a dead grant produces a
+          failing sync too, and printing both says one thing twice. */}
+      {server.syncError === null || server.authError !== null ? null : (
+        <p className="mt-2 text-xs text-destructive">
+          Last sync failed, so these tools are cached rather than current. {server.syncError.message}
+        </p>
       )}
 
       {/*

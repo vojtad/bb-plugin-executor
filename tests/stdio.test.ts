@@ -13,7 +13,7 @@ const server: ServerRecord = {
   command: process.execPath, args: [fixture], env: {}, headers: {}, cwd: null,
   enabled: true, createdAt: 1,
   oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-  authError: null, authErrorAt: null,
+  authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
 };
 let supervisor: ReturnType<typeof createStdioSupervisor> | null = null;
 afterEach(async () => { await supervisor?.killAll(); supervisor = null; });

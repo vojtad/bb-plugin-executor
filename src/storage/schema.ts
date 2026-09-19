@@ -155,4 +155,15 @@ export const MCP_MIGRATIONS: string[] = [
   ALTER TABLE servers ADD COLUMN kind TEXT NOT NULL DEFAULT '';
   UPDATE servers SET kind = CASE transport WHEN 'stdio' THEN 'local' ELSE 'remote' END;
   `,
+  // Whether the last attempt to read this server's tools worked.
+  //
+  // `auth_error` only ever covers an OAuth refusal, so a stdio server whose
+  // binary is missing, or a host that has answered 500 for a week, showed
+  // "Connected, 12 tools" from its cached catalog while every sync failed in
+  // a log file. The cache is the right behaviour - a server that is merely
+  // down keeps its tools registered - but it must not read as health.
+  `
+  ALTER TABLE servers ADD COLUMN sync_error TEXT;
+  ALTER TABLE servers ADD COLUMN sync_error_at INTEGER;
+  `,
 ];

@@ -40,6 +40,11 @@ function describe(bb: BbPluginApi, registry: Registry): string {
     // named underneath is unusable until someone reconnects the server.
     if (server.authError !== null) {
       lines.push(`  ! NEEDS RECONNECTING in the MCP panel: ${server.authError}`);
+    } else if (server.syncError !== null) {
+      // The tools printed below came from the cache, and saying so is the
+      // whole point: an agent reading this list would otherwise take them for
+      // a live inventory.
+      lines.push(`  ! NOT RESPONDING - tools below are cached: ${server.syncError}`);
     }
     lines.push(
       live.length === 0

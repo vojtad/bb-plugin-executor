@@ -196,6 +196,15 @@ export const serverSchema = z.object({
    */
   authError: z.object({ message: z.string(), at: z.number() }).nullable(),
   /**
+   * Why the last attempt to read this server's tools failed, and since when.
+   *
+   * Distinct from `authError`, which is only an OAuth refusal. A server that
+   * is authorized but unreachable still has a catalog - deliberately, so a
+   * server that is merely down keeps its tools registered - and without this
+   * the row reads "Connected, 12 tools" throughout.
+   */
+  syncError: z.object({ message: z.string(), at: z.number() }).nullable(),
+  /**
    * The redirect URI the stored OAuth client was registered with, or `null`
    * when no client is stored. The panel compares it with the one THIS browser
    * would use and explains the difference, because connecting from a second
@@ -537,6 +546,17 @@ export const consentPayloadSchema = z.object({
   toolName: z.string(),
   summary: z.string(),
   destructive: z.boolean(),
+  /**
+   * The services this one tool reaches, when it is a door.
+   *
+   * A thread grant is keyed on the tool NAME, so granting it to a door grants
+   * it to everything behind the door: approving a Notion read through
+   * `execute` permits a Gmail send through `execute` for the rest of the
+   * thread. "With any arguments" is true but badly understates that, because
+   * for an ordinary tool the arguments are the blast radius and for a door
+   * they are the choice of service.
+   */
+  reaches: z.array(z.string()),
 });
 export type McpConsentPayload = z.infer<typeof consentPayloadSchema>;
 

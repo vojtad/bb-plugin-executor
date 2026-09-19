@@ -272,7 +272,7 @@ describe("rpc servers_connect", () => {
     url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
     cwd: null, enabled: true, createdAt: 1,
     oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null,
+    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
   };
 
   it("returns the authorize url for an http server", async () => {
@@ -340,7 +340,7 @@ describe("rpc servers_set_headers", () => {
     url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
     cwd: null, enabled: true, createdAt: 1,
     oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null,
+    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
   };
 
   function deps(servers: ServerRecord[], dropClient: RpcDeps["dropClient"]): RpcDeps {
@@ -447,7 +447,7 @@ describe("rpc credentials", () => {
       url: "https://mcp.googleapis.com/mcp", command: null, args: [], env: {}, headers: {},
       cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     registry.replaceCatalog("gmail", [{
       serverId: "gmail", upstreamName: "search_mail", registeredName: "search_mail",
@@ -504,7 +504,7 @@ describe("rpc token estimate", () => {
       url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
       cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     registry.replaceCatalog("notion", entries.map((entry) => ({
       serverId: "notion", ...entry, inputSchema: schema,
@@ -647,7 +647,7 @@ describe("rpc servers_set_oauth_client", () => {
     const registry = createRegistry(active.bb.storage.database());
     expect(registry.getServer("notion")).toMatchObject({
       oauthClientId: "", oauthClientSecret: "", oauthScopes: "",
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     expect((await call(active, "servers_list", null)).servers[0].hasOauthClientSecret)
       .toBe(false);

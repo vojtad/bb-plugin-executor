@@ -64,6 +64,9 @@ function toServerDto(
     authError: record.authError === null
       ? null
       : { message: record.authError, at: record.authErrorAt ?? 0 },
+    syncError: record.syncError === null
+      ? null
+      : { message: record.syncError, at: record.syncErrorAt ?? 0 },
     registeredRedirectUri,
   };
 }
@@ -221,6 +224,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
         oauthScopes: input.oauthScopes ?? null,
         authError: null,
         authErrorAt: null,
+        syncError: null,
+        syncErrorAt: null,
       };
       deps.registry.upsertServer(record);
       changed();

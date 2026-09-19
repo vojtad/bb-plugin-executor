@@ -105,6 +105,10 @@ export function createCatalog(deps: {
       deps.log.warn(
         `MCP catalog sync for "${serverId}" failed, keeping the cached catalog: ${String(error)}`,
       );
+      // Recorded, not only logged. The catalog is deliberately kept, so the
+      // panel would otherwise go on showing this server's tools as if it were
+      // healthy - for as long as it stays broken.
+      deps.registry.setSyncError(serverId, String(error));
       throw error;
     }
 
@@ -160,6 +164,7 @@ export function createCatalog(deps: {
     }
 
     deps.registry.replaceCatalog(serverId, rows);
+    deps.registry.setSyncError(serverId, null);
     if (added.length > 0) {
       deps.log.info(`MCP server "${serverId}" added ${added.length} tool(s): ${added.join(", ")}`);
     }

@@ -17,7 +17,7 @@ describe("registry", () => {
       url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
       cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     registry.replaceCatalog("notion", [{
       serverId: "notion", upstreamName: "notion-search",
@@ -37,7 +37,7 @@ describe("registry", () => {
       headers: { Authorization: "Bearer one", "X-Tenant": "acme" },
       cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     expect(registry.getServer("vl")?.headers)
       .toEqual({ Authorization: "Bearer one", "X-Tenant": "acme" });
@@ -52,7 +52,7 @@ describe("registry", () => {
       id: "s", displayName: "S", transport: "http", kind: "remote" as const, url: "https://x/mcp",
       command: null, args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     const tool = {
       serverId: "s", upstreamName: "gone", registeredName: "gone",
@@ -91,7 +91,7 @@ describe("registry", () => {
       id: "s", displayName: "S", transport: "http", kind: "remote" as const, url: "https://x/mcp",
       command: null, args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     registry.replaceCatalog("s", [{
       serverId: "s", upstreamName: "present", registeredName: "present",
@@ -107,7 +107,7 @@ describe("registry", () => {
       id: "s", displayName: "S", transport: "http", kind: "remote" as const, url: "https://x/mcp",
       command: null, args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
 
     registry.setServerOAuthClient("s", {
@@ -119,7 +119,7 @@ describe("registry", () => {
     expect(registry.getServer("s")).toMatchObject({
       createdAt: 1, oauthClientId: "gcp-id", oauthClientSecret: "gcp-secret",
       oauthScopes: "a b",
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
 
     // Null leaves a field alone; an empty string clears it. Without that
@@ -130,7 +130,7 @@ describe("registry", () => {
     });
     expect(registry.getServer("s")).toMatchObject({
       oauthClientId: "gcp-id-2", oauthClientSecret: "gcp-secret", oauthScopes: "a b",
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
 
     registry.setServerOAuthClient("s", { clientId: null, clientSecret: "", scopes: null });
@@ -143,7 +143,7 @@ describe("registry", () => {
       id: "s", displayName: "S", transport: "http", kind: "remote" as const, url: "https://x/mcp",
       command: null, args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     registry.replaceCatalog("s", [{
       serverId: "s", upstreamName: "tool-a", registeredName: "tool-a",
@@ -210,7 +210,7 @@ describe("recording why a connection stopped working", () => {
       url: "https://executor.test/mcp", command: null, args: [], env: {}, headers: {},
       cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     return registry;
   }
@@ -231,7 +231,7 @@ describe("recording why a connection stopped working", () => {
     registry.setAuthError("executor", "Grant not found");
     registry.setAuthError("executor", null);
     expect(registry.getServer("executor")).toMatchObject({
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
   });
 });

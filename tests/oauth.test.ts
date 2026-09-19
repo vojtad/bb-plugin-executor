@@ -527,7 +527,7 @@ describe("401 handling", () => {
     url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
     cwd: null, enabled: true, createdAt: 1,
     oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null,
+    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
   };
   const registry = { getServer: () => server } as unknown as Registry;
   const ctx: PluginAgentToolContext = {
@@ -664,7 +664,7 @@ describe("bearer header wiring", () => {
     url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
     cwd: null, enabled: true, createdAt: 1,
     oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null,
+    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
   };
 
   function upstream() {

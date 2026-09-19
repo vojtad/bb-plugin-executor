@@ -11,7 +11,7 @@ const server: ServerRecord = {
   id: "vl", displayName: "VL", transport: "http", kind: "remote" as const, url: "https://vl/mcp",
   command: null, args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
   oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-  authError: null, authErrorAt: null,
+  authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
 };
 
 const realFetch = globalThis.fetch;

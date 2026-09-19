@@ -71,6 +71,16 @@ export interface ServerRecord {
    */
   authError: string | null;
   authErrorAt: number | null;
+  /**
+   * Why the last catalog sync failed, or `null` when it worked.
+   *
+   * Separate from {@link ServerRecord.authError}, which is only ever an OAuth
+   * refusal. A server can be perfectly authorized and still unreachable, and
+   * the cached catalog means the panel would otherwise show its tools as if
+   * nothing were wrong.
+   */
+  syncError: string | null;
+  syncErrorAt: number | null;
 }
 
 export interface CatalogTool {
@@ -127,6 +137,8 @@ export interface Registry {
    * re-discovers the same dead grant every seventeen minutes.
    */
   setAuthError(id: string, message: string | null): void;
+  /** The same, for a sync that could not read the server's tools. */
+  setSyncError(id: string, message: string | null): void;
   deleteServer(id: string): void;
   listTools(serverId?: string): CatalogTool[];
   getToolByRegisteredName(name: string): CatalogTool | undefined;
@@ -164,6 +176,8 @@ interface ServerRow {
   oauth_scopes: string | null;
   auth_error: string | null;
   auth_error_at: number | null;
+  sync_error: string | null;
+  sync_error_at: number | null;
 }
 
 interface ToolRow {
@@ -201,6 +215,8 @@ function serverFromRow(row: ServerRow): ServerRecord {
     oauthScopes: row.oauth_scopes,
     authError: row.auth_error,
     authErrorAt: row.auth_error_at,
+    syncError: row.sync_error,
+    syncErrorAt: row.sync_error_at,
   };
 }
 
@@ -270,6 +286,16 @@ export function createRegistry(db: Database.Database): Registry {
       auth_error = @message,
       auth_error_at = CASE WHEN @message IS NULL THEN NULL
         WHEN auth_error IS NOT @message THEN @at ELSE auth_error_at END
+    WHERE id = @id
+  `);
+  // Same "since when" rule as the auth error above: the sweep rediscovers an
+  // unreachable server every seventeen minutes, and a timestamp bumped on
+  // each pass would report a week-old outage as a fresh one.
+  const setSyncErrorStmt = db.prepare(`
+    UPDATE servers SET
+      sync_error = @message,
+      sync_error_at = CASE WHEN @message IS NULL THEN NULL
+        WHEN sync_error IS NOT @message THEN @at ELSE sync_error_at END
     WHERE id = @id
   `);
   const deleteServerStmt = db.prepare("DELETE FROM servers WHERE id = ?");
@@ -449,6 +475,10 @@ export function createRegistry(db: Database.Database): Registry {
 
     setAuthError(id: string, message: string | null): void {
       setAuthErrorStmt.run({ id, message, at: Date.now() });
+    },
+
+    setSyncError(id: string, message: string | null): void {
+      setSyncErrorStmt.run({ id, message, at: Date.now() });
     },
 
     deleteServer(id: string): void {

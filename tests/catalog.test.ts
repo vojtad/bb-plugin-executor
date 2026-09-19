@@ -17,7 +17,7 @@ function addServer(store: Registry, id: string): void {
         url: `https://${id}.test/mcp`,
     command: null, args: [], env: {}, headers: {}, cwd: null, enabled: true, createdAt: 1,
     oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null,
+    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
   });
 }
 
@@ -201,7 +201,7 @@ describe("catalog ask policy", () => {
       url: "https://mcp.googleapis.com/mcp", command: null, args: [], env: {}, headers: {},
       cwd: null, enabled: true, createdAt: 1,
       oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-      authError: null, authErrorAt: null,
+      authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
     });
     const catalog = createCatalog({
       registry: store, pool: fakePool({ gmail: [tool("search_mail", true)] }), log,
