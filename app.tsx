@@ -1,29 +1,16 @@
-// bb-plugin-mcp - the BB plugin frontend entry.
-//
-// Compiled by `bb plugin build` into dist/app.js + dist/app.css. React and
-// @get-bb/plugin-sdk/app are provided by the BB app at load time (never
-// bundled), so this file must be loaded by BB, not imported directly.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { CONSENT_RENDERER_ID } from "./contract.js";
-import { ConnectionsPanel } from "./src/ui/connections-panel.js";
-import { ConsentPrompt } from "./src/ui/consent-prompt.js";
+import { APPROVAL_RENDERER_ID } from "./contract.js";
+import { ApprovalPrompt } from "./src/ui/approval-prompt.js";
+import { ExecutorPanel } from "./src/ui/executor-panel.js";
 
 export default definePluginApp((app) => {
-  // `subPath` is the route remainder, and the panel needs it: an OAuth
-  // redirect lands on `<panel>/oauth/callback` rather than on the plugin's
-  // public HTTP route, so that it works on an origin sitting behind a login.
+  // `subPath` carries the OAuth redirect, which lands on `<panel>/oauth/callback`.
   app.slots.navPanel({
-    id: "mcp",
-    title: "MCP",
+    id: "executor",
+    title: "Executor",
     icon: "PlugSocket",
-    path: "mcp",
-    component: ConnectionsPanel,
+    path: "executor",
+    component: ExecutorPanel,
   });
-  // The id is the whole backend-to-frontend link: `bb.ui.requestInput` names
-  // this same string as its `rendererId`, and a mismatch would leave every
-  // write tool waiting on a prompt that never renders.
-  app.slots.pendingInteraction({
-    id: CONSENT_RENDERER_ID,
-    component: ConsentPrompt,
-  });
+  app.slots.pendingInteraction({ id: APPROVAL_RENDERER_ID, component: ApprovalPrompt });
 });

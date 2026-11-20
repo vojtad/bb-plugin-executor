@@ -2,42 +2,32 @@
 //
 // Every OAuth test runs against an injected `fetchImpl` and an injected
 // `discover`: the flow must never reach the network from a test, and the
-// security properties here (single-use state, TTL, single-flight refresh,
-// no auto-retry of a write) are only observable when the fake authorization
-// server is under the test's control.
+// security properties here (single-use state, TTL, single-flight refresh) are
+// only observable when the fake authorization server is under the test's control.
 import Database from "better-sqlite3";
 import type {
   BbPluginApi,
-  PluginAgentToolContext,
-  PluginAgentToolResult,
   PluginHttpHandler,
 } from "@get-bb/plugin-sdk";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Context } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerClientWith } from "../src/oauth/discovery.js";
-import { z } from "zod";
 import plugin from "../server.js";
-import { createClientPool } from "../src/mcp/client-pool.js";
 import { registerOAuthRoutes } from "../src/server/routes.js";
 import {
   createOAuthFlow,
-  isUnauthorized,
   type OAuthFlow,
   PENDING_TTL_MS,
 } from "../src/oauth/flow.js";
 import { createPkce } from "../src/oauth/pkce.js";
 import { discoverWith } from "../src/oauth/discovery.js";
-import { createMcpExecutor } from "../src/server/tools.js";
-import type { CatalogTool, Registry, ServerRecord } from "../src/storage/registry.js";
 import { createOAuthStore } from "../src/storage/oauth-store.js";
-import { MCP_MIGRATIONS } from "../src/storage/schema.js";
+import { MIGRATIONS } from "../src/storage/store.js";
 
 function store() {
   const db = new Database(":memory:");
-  for (const statement of MCP_MIGRATIONS) db.exec(statement);
+  for (const statement of MIGRATIONS) db.exec(statement);
   return createOAuthStore(db);
 }
 
@@ -286,7 +276,7 @@ describe("oauth flow", () => {
       fetchImpl: vi.fn(), redirectUri: () => "http://127.0.0.1:38886/cb",
     });
     await expect(flow.begin("gmail", "https://gmailmcp.googleapis.com/mcp"))
-      .rejects.toThrow(/client id/i);
+      .rejects.toThrow(/access token/i);
   });
 
   it("points at the server's own OAuth section rather than plugin settings", async () => {
@@ -521,105 +511,12 @@ describe("discovery", () => {
   });
 });
 
-describe("401 handling", () => {
-  const server: ServerRecord = {
-    id: "notion", displayName: "Notion", transport: "http", kind: "remote" as const,
-    url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
-    cwd: null, enabled: true, createdAt: 1,
-    oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
-  };
-  const registry = { getServer: () => server } as unknown as Registry;
-  const ctx: PluginAgentToolContext = {
-    threadId: "t1", projectId: "p1", signal: new AbortController().signal,
-  };
-  /** `PluginAgentToolResult` widens to a bare string, which this never is. */
-  function failed(result: PluginAgentToolResult): boolean {
-    return typeof result === "object" && result !== null && result.isError === true;
-  }
-  function tool(readOnly: boolean): CatalogTool {
-    return {
-      serverId: "notion", upstreamName: "search", registeredName: "search",
-      description: "", inputSchema: {}, readOnly, ask: !readOnly,
-      askOverridden: false, defaultEnabled: false, stale: false, syncedAt: 1,
-    };
-  }
-
-  it("recognises the shapes a 401 arrives in", () => {
-    expect(isUnauthorized(Object.assign(new Error("nope"), { code: 401 }))).toBe(true);
-    expect(isUnauthorized(new Error("HTTP 401 Unauthorized"))).toBe(true);
-    expect(isUnauthorized(new Error("HTTP 500"))).toBe(false);
-    expect(isUnauthorized(new Error("bad request: 4010 items"))).toBe(false);
-  });
-
-  it("retries a read-only tool once after a refresh", async () => {
-    let attempt = 0;
-    const pool = {
-      callTool: vi.fn(async () => {
-        attempt += 1;
-        if (attempt === 1) throw Object.assign(new Error("HTTP 401"), { code: 401 });
-        return { content: [{ type: "text" as const, text: "ok" }], isError: false };
-      }),
-    };
-    const refreshAuth = vi.fn(async () => true);
-    const execute = createMcpExecutor({
-      registry, pool: pool as never, stderrTail: () => [], refreshAuth,
-    });
-    const result = await execute(tool(true), {}, ctx);
-    expect(failed(result)).toBe(false);
-    expect(pool.callTool).toHaveBeenCalledTimes(2);
-    expect(refreshAuth).toHaveBeenCalledTimes(1);
-  });
-
-  it("never auto-retries a write, because a double POST is worse than a failure", async () => {
-    const pool = {
-      callTool: vi.fn(async () => {
-        throw Object.assign(new Error("HTTP 401"), { code: 401 });
-      }),
-    };
-    const refreshAuth = vi.fn(async () => true);
-    const execute = createMcpExecutor({
-      registry, pool: pool as never, stderrTail: () => [], refreshAuth,
-    });
-    const result = await execute(tool(false), {}, ctx);
-    expect(failed(result)).toBe(true);
-    expect(pool.callTool).toHaveBeenCalledTimes(1);
-    expect(refreshAuth).not.toHaveBeenCalled();
-    // The failure the caller sees has to explain itself: silence here reads as
-    // a broken plugin rather than a deliberate refusal to replay a write.
-    const message = typeof result === "object" ? JSON.stringify(result.content) : "";
-    expect(message).toContain("rejected the stored credentials");
-    expect(message).toContain("not retried");
-    // And it has to say why one more call is safe, rather than warning about
-    // duplicating the write and then asking for it again in the same breath.
-    // A 401 is refused at the auth layer before the tool runs, so this is the
-    // one failure that cannot have half-happened.
-    expect(message).toContain("nothing ran and nothing was changed");
-    expect(message).not.toContain("could duplicate");
-  });
-
-  it("does not retry a read-only tool when the refresh produced no new token", async () => {
-    const pool = {
-      callTool: vi.fn(async () => {
-        throw Object.assign(new Error("HTTP 401"), { code: 401 });
-      }),
-    };
-    const execute = createMcpExecutor({
-      registry, pool: pool as never, stderrTail: () => [],
-      refreshAuth: async () => false,
-    });
-    const result = await execute(tool(true), {}, ctx);
-    expect(failed(result)).toBe(true);
-    expect(pool.callTool).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("callback route", () => {
   let host: ReturnType<typeof createFakePluginHost> | null = null;
   afterEach(async () => { await host?.harness.lifecycle.dispose(); host = null; });
 
   async function load() {
-    host = createFakePluginHost({ pluginId: "mcp" });
+    host = createFakePluginHost({ pluginId: "executor" });
     await plugin(host.bb);
     return host;
   }
@@ -647,118 +544,6 @@ describe("callback route", () => {
     expect(body).toContain("That did not work");
     // Nothing about the failure leaks back to the browser.
     expect(body).not.toContain("forged");
-  });
-
-  it("declares no plugin-global OAuth settings", async () => {
-    const active = await load();
-    // A manual client is per server now. Settings keys are static, so one
-    // `googleClientId` could serve exactly one server: not Slack as well, not
-    // a self-hosted deployment, not a second Google account.
-    expect(active.harness.inspection.registrations.settingsDescriptors).toEqual({});
-  });
-});
-
-describe("bearer header wiring", () => {
-  const server: ServerRecord = {
-    id: "notion", displayName: "Notion", transport: "http", kind: "remote" as const,
-    url: "https://mcp.notion.com/mcp", command: null, args: [], env: {}, headers: {},
-    cwd: null, enabled: true, createdAt: 1,
-    oauthClientId: null, oauthClientSecret: null, oauthScopes: null,
-    authError: null, authErrorAt: null, syncError: null, syncErrorAt: null,
-  };
-
-  function upstream() {
-    const mcp = new McpServer({ name: "fake", version: "1.0.0" });
-    mcp.registerTool("search", {
-      description: "Search", inputSchema: { q: z.string() },
-      annotations: { readOnlyHint: true },
-    }, async ({ q }) => ({ content: [{ type: "text", text: q }] }));
-    return mcp;
-  }
-
-  /**
-   * A pool whose transport factory records the headers it was handed.
-   *
-   * The recording IS the assertion: `getAuthHeader` was declared on the pool
-   * for four tasks before anything called it, and a pool that stopped calling
-   * it would connect every remote server unauthenticated while every other
-   * test stayed green.
-   */
-  function recordingPool(
-    flow: { accessToken(id: string, resourceUrl: string): Promise<string | null> },
-  ) {
-    const headers: Array<Record<string, string>> = [];
-    const pool = createClientPool({
-      createTransport: async (_serverRecord, resolveAuthHeaders) => {
-        // Called here rather than stored, because production calls it per
-        // request: what this records is the header one connection went out
-        // with, which is still what every assertion below is about.
-        headers.push(await resolveAuthHeaders());
-        const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-        await upstream().connect(serverSide);
-        return clientSide;
-      },
-      // Mirrors server.ts: the record, not just the id, so the token can be
-      // checked against the url it is about to be sent to.
-      getAuthHeader: async (record): Promise<Record<string, string>> => {
-        const token = await flow.accessToken(record.id, record.url ?? "");
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      },
-      log: { warn: vi.fn(), info: vi.fn() },
-    });
-    return { pool, headers };
-  }
-
-  async function connected(options: { expiresIn?: number; now(): number }) {
-    const as = fakeAs({ expiresIn: options.expiresIn });
-    const flow = createOAuthFlow({
-      store: store(), discover: async () => metadata, fetchImpl: as.fetchImpl,
-      redirectUri: () => "http://127.0.0.1:38886/cb", now: options.now,
-    });
-    const { authorizeUrl } = await flow.begin("notion", "https://mcp.notion.com/mcp");
-    await flow.complete(new URL(authorizeUrl).searchParams.get("state")!, "code");
-    return flow;
-  }
-
-  it("carries the stored access token into the transport", async () => {
-    const flow = await connected({ now: () => 5_000_000 });
-    const { pool, headers } = recordingPool(flow);
-    await pool.listTools(server);
-    expect(headers).toEqual([{ Authorization: "Bearer at1" }]);
-    await pool.closeAll();
-  });
-
-  it("sends no header for a server that was never authorized", async () => {
-    const flow = createOAuthFlow({
-      store: store(), discover: async () => metadata, fetchImpl: vi.fn(),
-      redirectUri: () => "http://127.0.0.1:38886/cb",
-    });
-    const { pool, headers } = recordingPool(flow);
-    await pool.listTools(server);
-    // A local stdio server and an unauthenticated remote one both land here;
-    // neither should be sent an empty bearer.
-    expect(headers).toEqual([{}]);
-    await pool.closeAll();
-  });
-
-  it("carries a REFRESHED token into the next connection", async () => {
-    let now = 5_000_000;
-    const flow = await connected({ expiresIn: 1000, now: () => now });
-    const { pool, headers } = recordingPool(flow);
-
-    await pool.listTools(server);
-    // What a 401 does: the pool drops the client, so the next call reconnects.
-    // Streamable HTTP bakes headers in at construction, so a refreshed token
-    // only ever reaches a server through a NEW transport.
-    now += 800 * 1000;
-    await pool.close(server.id);
-    await pool.listTools(server);
-
-    expect(headers).toEqual([
-      { Authorization: "Bearer at1" },
-      { Authorization: "Bearer at2" },
-    ]);
-    await pool.closeAll();
   });
 });
 

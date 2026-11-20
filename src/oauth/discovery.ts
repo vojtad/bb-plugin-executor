@@ -227,7 +227,7 @@ export async function registerClientWith(
 ): Promise<{ clientId: string; clientSecret: string | null }> {
   if (!metadata.registrationEndpoint) {
     throw new Error(
-      "This MCP server does not offer dynamic client registration, so it needs a "
+      "This server does not offer dynamic client registration, so it needs a "
       + "client id and secret you create yourself.",
     );
   }

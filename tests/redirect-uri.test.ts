@@ -11,14 +11,14 @@ import { oauthRedirectUriFor } from "../contract.js";
 import { oauthRedirectUri } from "../src/server/routes.js";
 
 const bb = {
-  pluginId: "mcp",
+  pluginId: "executor",
   server: { loopbackBaseUrl: "http://127.0.0.1:38886" },
 } as unknown as BbPluginApi;
 
 describe("the oauth redirect uri", () => {
   it("follows the origin the panel is served from", () => {
     expect(oauthRedirectUri(bb, "https://bb.example.ts.net"))
-      .toBe("https://bb.example.ts.net/plugins/mcp/mcp/oauth/callback");
+      .toBe("https://bb.example.ts.net/plugins/executor/executor/oauth/callback");
   });
 
   it("lands on the panel rather than on the public http route", () => {
@@ -31,7 +31,7 @@ describe("the oauth redirect uri", () => {
   it("falls back to loopback for a shell with no http origin", () => {
     for (const origin of [undefined, null, "file://", "not a url"]) {
       expect(oauthRedirectUri(bb, origin)).toBe(
-        "http://127.0.0.1:38886/api/v1/plugins/mcp/http/oauth/callback",
+        "http://127.0.0.1:38886/api/v1/plugins/executor/http/oauth/callback",
       );
     }
   });

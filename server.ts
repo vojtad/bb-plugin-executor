@@ -1,252 +1,201 @@
-// bb-plugin-mcp - the BB plugin backend entry.
+// bb-plugin-executor - connects one Executor server (v1 or v2) to BB.
 //
-// This file is wiring only. It opens the plugin's database, builds the MCP
-// stack (registry -> stdio supervisor -> client pool -> catalog), registers
-// the agent surfaces from the CACHED catalog, and exposes the registry over
-// RPC. Nothing here touches an MCP server: the load path must never block on
-// one, so discovery happens in `catalog.sync`, which runs from an explicit
-// RPC or a background refresh.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { MCP_CHANGED } from "./contract.js";
-import { createCatalog } from "./src/catalog.js";
-import { createConsentGate, withConsent } from "./src/consent.js";
-import { createClientPool } from "./src/mcp/client-pool.js";
-import { createStdioSupervisor, loginShellPath } from "./src/mcp/stdio.js";
-import { createHttpTransport, createStdioTransport } from "./src/mcp/transport.js";
+// Tools are registered from the cached catalog, so the load path never waits
+// on the server. Executor runs in native elicitation mode: when an action
+// needs approval it asks this plugin, which answers from the user's rules or
+// a BB prompt - never the model.
+import type { BbPluginApi, PluginAgentToolContext, PluginAgentToolResult } from "@get-bb/plugin-sdk";
+import { EXECUTOR_CHANGED, type ExecutorState, rpcContract } from "./contract.js";
+import { createApprovals } from "./src/approvals.js";
+import { createExecutorClient, detectVersion, endpointUrl, integrations } from "./src/executor.js";
 import { discover } from "./src/oauth/discovery.js";
-import { createOAuthFlow, type OAuthFlow } from "./src/oauth/flow.js";
-import { registerCli } from "./src/server/cli.js";
-import { createSelectionStore, registerConfigure } from "./src/server/configure.js";
+import { createOAuthFlow, describeRefusal, isUnauthorized } from "./src/oauth/flow.js";
 import { quietLogger, warnQuietly } from "./src/server/log.js";
 import { registerProviderEnv } from "./src/server/provider-env.js";
 import { oauthRedirectUri, registerOAuthRoutes } from "./src/server/routes.js";
-import { registerRpc } from "./src/server/rpc.js";
-import { registerServices } from "./src/server/services.js";
-import {
-  createMcpExecutor,
-  registerCatalogTools,
-  registeredToolOwners,
-} from "./src/server/tools.js";
 import { createOAuthStore } from "./src/storage/oauth-store.js";
-import { createRegistry } from "./src/storage/registry.js";
-import { MCP_MIGRATIONS } from "./src/storage/schema.js";
+import { createStore, MIGRATIONS } from "./src/storage/store.js";
+import { changedTools, registerConfigure, registerTools } from "./src/tools.js";
+
+/** The OAuth store is keyed by server; there is only ever this one. */
+const SERVER_ID = "executor";
+const SYNC_CRON = "*/17 * * * *";
 
 export default async function plugin(bb: BbPluginApi): Promise<void> {
   const database = bb.storage.database();
-  bb.storage.migrate(database, MCP_MIGRATIONS);
-  const registry = createRegistry(database);
-
-  // Every one of these can log from work that outlives the load - a scheduled
-  // refresh, a client that fails long after the call that opened it - and a
-  // stale `bb` handle throws on any member, so none of them gets `bb.log`.
+  bb.storage.migrate(database, MIGRATIONS);
+  const store = createStore(database);
+  // Background work outlives the load, and a stale `bb` throws on any member.
   const log = quietLogger(bb);
-  const stdio = createStdioSupervisor({ resolvePath: loginShellPath, log });
-  const oauth: OAuthFlow = createOAuthFlow({
+  const changed = (): void => {
+    try {
+      bb.realtime.publish(EXECUTOR_CHANGED, null);
+    } catch {
+      // A stale handle after a reload; nobody is listening to this load anymore.
+    }
+  };
+
+  const oauth = createOAuthFlow({
     store: createOAuthStore(database),
     discover,
     fetchImpl: fetch,
-    // Read per call, never captured: `bb.server.loopbackBaseUrl` is
-    // bind-gated and throws when read at factory scope.
     redirectUri: (origin) => oauthRedirectUri(bb, origin),
-    // A dead grant has to be legible somewhere other than a log file: this is
-    // what puts it in the panel, in `bb mcp list`, and in the error an agent
-    // gets back when it calls the tool.
-    onAuthFailure: (serverId, message) => {
-      registry.setAuthError(serverId, message);
-      warnQuietly(bb, `MCP server "${serverId}" needs reconnecting: ${message}`);
-      bb.realtime.publish(MCP_CHANGED, null);
-      reportConfiguration();
+    onAuthFailure: (_serverId, message) => {
+      store.setError(`Sign-in expired: ${message}`);
+      warnQuietly(bb, `Executor needs reconnecting: ${message}`);
+      changed();
     },
-    onAuthRecovered: (serverId) => {
-      registry.setAuthError(serverId, null);
-      reportConfiguration();
-    },
-    // The server's own row, not a settings key. Which servers need a client
-    // the user created themselves is open-ended - Slack, Google, a self-hosted
-    // deployment, a second account for a service already configured - and a
-    // settings schema is a fixed set of names. `null` here means "no manual
-    // client saved", which is the flow's cue to try registration.
-    staticClient: async (serverId) => {
-      const server = registry.getServer(serverId);
-      if (!server?.oauthClientId) return null;
-      return {
-        clientId: server.oauthClientId,
-        clientSecret: server.oauthClientSecret,
-      };
-    },
-    scopes: (serverId) => registry.getServer(serverId)?.oauthScopes ?? null,
+    onAuthRecovered: () => { store.setError(null); changed(); },
     log,
-  });
-  const pool = createClientPool({
-    createTransport: async (server, resolveAuthHeaders) =>
-      server.transport === "stdio"
-        ? createStdioTransport(server, stdio)
-        : createHttpTransport(server, resolveAuthHeaders),
-    // Resolved on every REQUEST, not once per connection: a pooled client can
-    // outlive several access tokens, and `accessToken` refreshes at three
-    // quarters of the quoted lifetime, so a token that went stale while the
-    // client sat idle is renewed before the call that needed it. An
-    // unauthenticated server simply has no tokens stored and gets no header.
-    getAuthHeader: async (server): Promise<Record<string, string>> => {
-      // The url, not just the id: a grant is bound to the host it was issued
-      // for, and the slug survives a remove-and-re-add pointing elsewhere.
-      const token = await oauth.accessToken(server.id, server.url ?? "");
-      return token ? { Authorization: `Bearer ${token}` } : {};
-    },
-    log,
-  });
-  const catalog = createCatalog({
-    registry,
-    pool,
-    log,
-    // A server whose grant is gone answers 401 to everything. Without this it
-    // is retried on every cycle forever, which is how four days of identical
-    // failures ended up in a log with nobody told.
-    needsReconnect: (serverId) => oauth.status(serverId) === "needs-reconnect",
   });
 
-  /**
-   * Marks the plugin as needing configuration while any server's credentials
-   * are dead.
-   *
-   * `bb.status` is the only surface this plugin has that reaches a user who
-   * does not have the panel open - it shows in `bb plugin list` and in the BB
-   * UI. The SDK clears it on every load, so it is re-asserted from each place
-   * that could have changed the answer rather than set once.
-   */
-  function reportConfiguration(): void {
-    try {
-      const broken = registry.listServers().filter(
-        (server) => server.authError !== null || server.syncError !== null,
-      );
-      // `needsConfiguration` has no clear - the SDK drops it on the next load
-      // and not before - so a recovery cannot take the line back down. It is
-      // re-asserted while anything is still wrong, and the text says what to
-      // do about the stale case rather than pretending it cannot happen.
-      if (broken.length === 0) return;
-      const named = broken.map((server) => server.displayName).join(", ");
-      bb.status.needsConfiguration(
-        `${broken.length === 1
-          ? `MCP server "${named}" needs attention`
-          : `${broken.length} MCP servers need attention: ${named}`} `
-        + "- open the MCP panel. (This line clears when the plugin next "
-        + "reloads, so it can outlive the fix.)",
-      );
-    } catch {
-      // Called from background work that can outlive the load; a status line
-      // is never worth taking the host down with.
-    }
-  }
+  const client = createExecutorClient({
+    url: () => store.get().url,
+    authHeaders: async (): Promise<Record<string, string>> => {
+      const { url, token } = store.get();
+      if (token) return { Authorization: `Bearer ${token}` };
+      const access = url === null ? null : await oauth.accessToken(SERVER_ID, endpointUrl(url));
+      return access ? { Authorization: `Bearer ${access}` } : {};
+    },
+    refreshAuth: async () => (store.get().token ? false : oauth.refresh(SERVER_ID)),
+  });
 
-  // The plugin's only protection against a silent write. BB puts every plugin
-  // tool into Claude Code's `allowedTools` and Codex forwards tool calls with
-  // no approval hook, so `canUseTool` never fires for these and no provider
-  // will ask on our behalf (design section 9).
-  const consent = createConsentGate({
+  const approvals = createApprovals({
     requestInput: (request, options) => bb.ui.requestInput(request, options),
-    // Read at prompt time: the display name is what the user recognises, and
-    // a server renamed since registration must prompt under its new name.
-    serverName: (serverId) => registry.getServer(serverId)?.displayName ?? serverId,
-  });
-  const execute = withConsent(
-    createMcpExecutor({
-      registry, pool, stderrTail: (serverId) => stdio.stderrTail(serverId),
-      // Only ever consulted for a `readOnly` tool: a write is never replayed.
-      refreshAuth: (serverId) => oauth.refresh(serverId),
-      // A 401 that outlives a refresh is the other way a grant turns out to
-      // be dead. Recorded here so the panel says it too, rather than the only
-      // record being an error one agent saw once.
-      reportAuthFailure: (serverId, message) => {
-        registry.setAuthError(serverId, message);
-        bb.realtime.publish(MCP_CHANGED, null);
-        reportConfiguration();
-      },
-    }),
-    consent,
-  );
-
-  // A thread-scoped allowance must not outlive its thread: a recycled id
-  // would inherit approvals the new thread's user never gave.
-  for (const event of ["thread.archived", "thread.deleted"] as const) {
-    bb.events.on(event, ({ thread }) => consent.forgetThread(thread.id));
-  }
-  const selection = createSelectionStore({
-    registry,
-    registeredOwners: () => registeredToolOwners(bb),
-    log,
+    approveAll: () => store.get().approveAll,
+    rules: () => store.rules(),
+    addRule: (pattern) => { store.addRule(pattern); changed(); },
   });
 
-  /**
-   * Registers whatever the catalog gained and rebuilds the selection.
-   * `registerTool` works after load, so a sync adds tools live and they reach
-   * a thread when its provider session is next constructed - never a reload,
-   * which would cancel every pending interaction on every thread.
-   */
-  const onCatalogChanged = (): void => {
-    registerCatalogTools(bb, { registry, execute });
-    selection.refresh();
+  const runTool = async (
+    name: string,
+    args: Record<string, unknown>,
+    ctx: PluginAgentToolContext,
+  ): Promise<PluginAgentToolResult> => {
+    try {
+      return await client.callTool(name, args, {
+        signal: ctx.signal,
+        elicit: (params) => approvals.answer(params, ctx),
+      });
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Executor could not run "${name}": ${String(error)}. `
+            + "If it was cut off mid-run, earlier calls in it may already have taken effect.",
+        }],
+        isError: true,
+      };
+    }
   };
 
-  onCatalogChanged();
-  reportConfiguration();
-  registerConfigure(bb, {
-    selection: () => selection.snapshot(),
-  });
-  // The fallback callback, for a shell with no http(s) origin to redirect to.
-  // A browser that has one lands on the panel instead and completes the
-  // exchange over the authenticated `oauth_complete` RPC; this route is
-  // unauthenticated by necessity, since a redirect from the authorization
-  // server carries no BB origin and no plugin token, and the single-use
-  // `state` nonce is all that stands in for both.
-  registerOAuthRoutes(bb, {
-    flow: oauth,
-    onConnected: (serverId) => {
-      registry.setAuthError(serverId, null);
-      reportConfiguration();
-      // A freshly authorized server has a catalog worth reading, and the
-      // callback's browser tab is not somewhere to wait for it.
-      void catalog
-        .sync(serverId)
-        .then(() => { onCatalogChanged(); })
-        .catch((error: unknown) => {
-          warnQuietly(
-            bb,
-            `Connected MCP server "${serverId}" but could not read its tools: ${String(error)}`,
-          );
-        });
-    },
-  });
-  registerRpc(bb, {
-    registry,
-    catalog,
-    pool,
-    oauth,
-    onAuthChanged: reportConfiguration,
-    stderrTail: (serverId) => stdio.stderrTail(serverId),
-    onCatalogChanged,
-    onSelectionChanged: () => { selection.refresh(); },
-    dropClient: (serverId) => pool.close(serverId),
-  });
-  registerCli(bb, { registry });
-  registerProviderEnv(bb);
-  registerServices(bb, {
-    catalog,
-    onCatalogChanged,
-    // Run before the catalog sweep so a grant that died overnight is
-    // discovered - and recorded - by the background pass rather than by the
-    // first tool call of the morning.
-    warmTokens: async () => {
-      for (const server of registry.listServers()) {
-        if (server.transport !== "http" || server.url === null) continue;
-        await oauth.accessToken(server.id, server.url);
+  async function sync(): Promise<void> {
+    if (store.get().url === null) return;
+    try {
+      store.setTools(await client.listTools());
+      registerTools(bb, store.get().tools, runTool);
+    } catch (error) {
+      // Not signed in yet is a state the panel already shows, not a failure.
+      const signedOut = !store.get().token && oauth.status(SERVER_ID) === "disconnected";
+      if (!(signedOut && isUnauthorized(error))) {
+        store.setError(`Could not read tools: ${describeRefusal(error)}`);
       }
+      log.warn(`Executor sync failed, keeping the cached tools: ${String(error)}`);
+    }
+    changed();
+  }
+
+  registerTools(bb, store.get().tools, runTool);
+  registerConfigure(bb, () => store.get().tools);
+  registerProviderEnv(bb);
+  registerOAuthRoutes(bb, { flow: oauth, onConnected: () => { void sync(); } });
+  bb.background.schedule("sync", SYNC_CRON, sync);
+
+  function state(): ExecutorState {
+    const connection = store.get();
+    return {
+      url: connection.url,
+      hasToken: connection.token !== null,
+      auth: connection.token !== null ? "connected" : oauth.status(SERVER_ID),
+      version: detectVersion(connection.tools),
+      error: connection.error,
+      syncedAt: connection.syncedAt,
+      tools: connection.tools.map((tool) => tool.name),
+      integrations: integrations(connection.tools),
+      changedTools: changedTools(bb, connection.tools),
+      approveAll: connection.approveAll,
+      rules: store.rules(),
+    };
+  }
+
+  const done = { ok: true as const };
+  const mutate = (apply: () => void): typeof done => {
+    apply();
+    changed();
+    return done;
+  };
+
+  bb.rpc.register(rpcContract, {
+    state: () => state(),
+    configure: async ({ url, token }) => {
+      const trimmed = url.trim();
+      endpointUrl(trimmed); // Throws on a malformed URL.
+      const current = store.get();
+      const nextToken = token === null ? current.token : token.trim() || null;
+      if (trimmed !== current.url) oauth.forget(SERVER_ID);
+      store.setTarget(trimmed, nextToken);
+      changed();
+      await sync();
+      return done;
     },
+    connect: async ({ redirectOrigin }) => {
+      const { url } = store.get();
+      if (url === null) throw new Error("Save the Executor URL first.");
+      return oauth.begin(SERVER_ID, endpointUrl(url), redirectOrigin);
+    },
+    oauth_complete: async ({ state: oauthState, code }) => {
+      await oauth.complete(oauthState, code);
+      store.setError(null);
+      await sync();
+      return done;
+    },
+    disconnect: () => mutate(() => {
+      oauth.forget(SERVER_ID);
+      store.setTarget(null, null);
+    }),
+    sync: async () => { await sync(); return done; },
+    reload: () => {
+      // After the reply: a reload disposes the instance answering it.
+      setTimeout(() => { void bb.sdk.plugins.reload({ pluginId: bb.pluginId }).catch(() => undefined); }, 0);
+      return done;
+    },
+    set_approve_all: ({ enabled }) => mutate(() => { store.setApproveAll(enabled); }),
+    add_rule: ({ pattern }) => mutate(() => {
+      const trimmed = pattern.trim();
+      if (trimmed === "" || trimmed === "*") throw new Error("Use Approve all instead of a bare *.");
+      store.addRule(trimmed);
+    }),
+    delete_rule: ({ pattern }) => mutate(() => { store.deleteRule(pattern); }),
   });
 
-  // Dispose hooks run before BB drains in-flight invocations, so this is the
-  // only place that reliably reaps MCP clients and stdio children.
-  bb.onDispose(async () => {
-    await pool.closeAll();
-    await stdio.killAll();
+  bb.cli.register({
+    name: "executor",
+    summary: "Show the Executor connection, its tools, and the auto-approve rules.",
+    commands: [{ name: "status", summary: "Show the connection and rules.", usage: "bb executor status" }],
+    run(argv) {
+      if (argv[0] !== undefined && argv[0] !== "status") {
+        return { exitCode: 1, stderr: `Unknown command "${argv[0]}". Usage: bb executor status\n` };
+      }
+      const s = state();
+      if (s.url === null) return { exitCode: 0, stdout: "Executor is not configured. Open the Executor panel in BB.\n" };
+      const lines = [
+        `${s.url}  ${s.version ?? "version unknown"}  ${s.auth}`,
+        ...(s.error === null ? [] : [`! ${s.error}`]),
+        `tools: ${s.tools.join(", ") || "none yet"}`,
+        ...(s.integrations.length === 0 ? [] : [`reaches: ${s.integrations.join(", ")}`]),
+        `auto-approve: ${s.approveAll ? "everything" : s.rules.join(", ") || "nothing"}`,
+      ];
+      return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+    },
   });
 }

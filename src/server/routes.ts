@@ -119,7 +119,7 @@ export function registerOAuthRoutes(bb: BbPluginApi, deps: OAuthRouteDeps): void
 
     try {
       const { serverId } = await deps.flow.complete(state, code);
-      infoQuietly(bb, `Connected MCP server "${serverId}" over OAuth`);
+      infoQuietly(bb, `Connected Executor over OAuth`);
       deps.onConnected(serverId);
       return page("Connected", "You can close this tab and go back to BB.");
     } catch (error) {

@@ -13,7 +13,7 @@ let host: ReturnType<typeof createFakePluginHost> | null = null;
 afterEach(async () => { await host?.harness.lifecycle.dispose(); host = null; });
 
 async function load(): Promise<ReturnType<typeof createFakePluginHost>> {
-  host = createFakePluginHost({ pluginId: "mcp" });
+  host = createFakePluginHost({ pluginId: "executor" });
   await plugin(host.bb);
   return host;
 }
@@ -26,24 +26,11 @@ describe("provider environment", () => {
 
     expect(await active.harness.behavior.resolveProviderEnv("claude-code", context))
       .toEqual([
-        {
+        expect.objectContaining({
           name: "ENABLE_CLAUDEAI_MCP_SERVERS",
           value: "0",
-          reason: "MCP tools come from the MCP plugin, so claude.ai connectors are off",
-        },
+        }),
       ]);
-  });
-
-  it("explains itself in the environment view", async () => {
-    const active = await load();
-
-    expect(await active.harness.behavior.resolveProviderEnvHealth("claude-code", {
-      hostId: "h1",
-    })).toEqual({
-      label: "MCP via plugin",
-      statusMessage:
-        "claude.ai connectors are not loaded; MCP tools come from the MCP plugin.",
-    });
   });
 
   // Codex has no environment variable for this, and BB maps contributed env

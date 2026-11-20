@@ -1,6 +1,6 @@
 {
-  "name": "bb-plugin-mcp",
-  "version": "0.1.0",
+  "name": "bb-plugin-executor",
+  "version": "0.2.0",
   "type": "module",
   "engines": {
     "bb": ">=0.42",
@@ -14,16 +14,13 @@
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "bb": {
-    "name": "MCP",
-    "description": "Connect MCP servers - local stdio and remote OAuth - and use their tools in every thread.",
+    "name": "Executor",
+    "description": "Connect an Executor server (v1 or v2), use its tools in every thread, and auto-approve the actions you trust.",
     "branding": {
       "icon": "PlugSocket"
     },
     "server": "./server.ts",
-    "app": "./app.tsx",
-    "skills": [
-      "skills"
-    ]
+    "app": "./app.tsx"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.1.3",

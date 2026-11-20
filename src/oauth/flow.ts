@@ -319,7 +319,7 @@ export function createOAuthFlow(deps: OAuthFlowDeps): OAuthFlow {
         );
       }
       deps.log?.warn(
-        `Could not refresh the OAuth token for MCP server "${serverId}": ${String(error)}`,
+        `Could not refresh the OAuth token for Executor: ${String(error)}`,
       );
       return false;
     }
@@ -362,10 +362,8 @@ export function createOAuthFlow(deps: OAuthFlowDeps): OAuthFlow {
             : null);
         if (!credentials) {
           throw new Error(
-            `MCP server "${serverId}" does not support dynamic client registration, `
-            + "so it needs a client id and secret you create yourself. Open the "
-            + `"OAuth client" section on this server in the MCP panel, which also `
-            + "shows the redirect URI to authorize.",
+            "This server does not support OAuth client registration. Use an "
+            + "access token instead.",
           );
         }
         client = {
@@ -381,7 +379,7 @@ export function createOAuthFlow(deps: OAuthFlowDeps): OAuthFlow {
         };
         deps.store.putClient(client);
       }
-      if (!client) throw new Error(`No OAuth client for MCP server "${serverId}"`);
+      if (!client) throw new Error(`No OAuth client for Executor`);
 
       // Discovered even for a reusable client, because the scope decision
       // below needs `scopesSupported` and the client row does not carry it.
@@ -452,7 +450,7 @@ export function createOAuthFlow(deps: OAuthFlowDeps): OAuthFlow {
       const client = deps.store.getClient(pending.serverId);
       if (!client) {
         throw new Error(
-          `The OAuth client for MCP server "${pending.serverId}" is gone; `
+          `The OAuth client for Executor is gone; `
           + "start the connection again",
         );
       }
@@ -484,7 +482,7 @@ export function createOAuthFlow(deps: OAuthFlowDeps): OAuthFlow {
       if (!tokens) return null;
       if (!isBoundTo(deps.store.getClient(serverId), resourceUrl)) {
         deps.log?.warn(
-          `Not sending the stored OAuth token for MCP server "${serverId}" to `
+          `Not sending the stored OAuth token for Executor to `
           + `${resourceUrl}: it was issued for a different host. Reconnect the server.`,
         );
         return null;
