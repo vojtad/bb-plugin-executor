@@ -20,11 +20,9 @@ export const stateSchema = z.object({
   url: z.string().nullable(),
   hasToken: z.boolean(),
   auth: z.enum(["disconnected", "connected", "needs-reconnect"]),
-  version: z.enum(["v1", "v2"]).nullable(),
   error: z.string().nullable(),
   syncedAt: z.number().nullable(),
   tools: z.array(z.string()),
-  integrations: z.array(z.string()),
   /** Tools whose description changed since registration: a reload is owed. */
   changedTools: z.array(z.string()),
   approveAll: z.boolean(),

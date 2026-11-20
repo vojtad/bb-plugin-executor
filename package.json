@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-executor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "engines": {
     "bb": ">=0.42",
@@ -15,7 +15,7 @@
   },
   "bb": {
     "name": "Executor",
-    "description": "Connect an Executor server (v1 or v2), use its tools in every thread, and auto-approve the actions you trust.",
+    "description": "Connect an Executor v2 server, use its tools in every thread, and auto-approve the actions you trust.",
     "branding": {
       "logo": {
         "light": "./assets/executor.png"

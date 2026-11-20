@@ -1,5 +1,4 @@
 import type { BbPluginApi, PluginAgentToolContext, PluginAgentToolResult } from "@get-bb/plugin-sdk";
-import { integrations } from "./executor.js";
 import type { ExecutorTool } from "./storage/store.js";
 
 export type RunTool = (
@@ -14,8 +13,8 @@ const MAX_INSTRUCTIONS = 4096;
 
 /**
  * name -> the shape handed to `registerTool`, per plugin load. There is no
- * unregister or update, so a tool whose description moves (adding an
- * integration rewrites `execute`'s) keeps the old one until a reload.
+ * unregister or update, so a tool whose description moves (an Executor
+ * upgrade) keeps the old one until a reload.
  */
 const registered = new WeakMap<BbPluginApi, Map<string, string>>();
 
@@ -29,18 +28,7 @@ function registeredFor(bb: BbPluginApi): Map<string, string> {
 }
 
 function shape(tool: ExecutorTool): string {
-  return JSON.stringify([description(tool), tool.inputSchema]);
-}
-
-/**
- * A provider that defers tools may only load a description on a keyword
- * search, which will never match "notion" against a tool named `execute`, so
- * the integrations are repeated as plain words.
- */
-function description(tool: ExecutorTool): string {
-  if (tool.name !== "execute") return tool.description;
-  const reaches = integrations([tool]);
-  return reaches.length === 0 ? tool.description : `${tool.description}\n\nReaches: ${reaches.join(", ")}.`;
+  return JSON.stringify([tool.description, tool.inputSchema]);
 }
 
 function label(prefix: string, name: string): string {
@@ -56,7 +44,7 @@ export function registerTools(bb: BbPluginApi, tools: readonly ExecutorTool[], r
     try {
       bb.agents.registerTool({
         name: tool.name,
-        description: description(tool),
+        description: tool.description,
         parameters: tool.inputSchema,
         presentation: {
           label: { pending: label("Running ", tool.name), completed: label("Ran ", tool.name) },
@@ -84,20 +72,19 @@ export function changedTools(bb: BbPluginApi, tools: readonly ExecutorTool[]): s
 }
 
 export function instructions(tools: readonly ExecutorTool[]): string {
-  if (!tools.some((tool) => tool.name === "execute")) return "";
-  const reaches = integrations(tools);
-  const text = [
-    "Executor's `execute` tool reaches services that are not in your tool list under their own names"
-    + (reaches.length === 0 ? "." : `: ${reaches.join(", ")}.`)
-    + " Check it before telling anyone a service is unavailable.",
-    "Load it by its exact name rather than searching for the service - in Claude Code, "
-    + "`ToolSearch` with `select:execute`, where the name may carry your provider's prefix "
-    + "for BB tools, e.g. `select:mcp__bb-bridge__execute`.",
+  if (tools.length === 0) return "";
+  return [
+    "Executor's tools (`search`, `describe`, `call`, `execute`) reach the user's connected "
+    + "integrations - Slack, Gmail, Notion and the like - which are not in your tool list under "
+    + "their own names. Search Executor before telling anyone a service is unavailable, and "
+    + "read `skills({ app: \"executor\", name: \"executor\" })` before first use.",
+    "Load a tool by its exact name rather than searching for the service - in Claude Code, "
+    + "`ToolSearch` with `select:search`, where the name may carry your provider's prefix "
+    + "for BB tools, e.g. `select:mcp__bb-bridge__search`.",
     "Executor actions that need approval are approved by the user or their auto-approve "
     + "rules, never by you. A declined or cancelled approval means the user said no: do not "
     + "retry it without asking them.",
-  ].join("\n\n");
-  return text.slice(0, MAX_INSTRUCTIONS);
+  ].join("\n\n").slice(0, MAX_INSTRUCTIONS);
 }
 
 export function registerConfigure(bb: BbPluginApi, tools: () => readonly ExecutorTool[]): void {

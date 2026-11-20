@@ -1,15 +1,14 @@
-// bb-plugin-executor - connects one Executor server (v1 or v2) to BB.
+// bb-plugin-executor - connects one Executor v2 server to BB.
 //
 // Tools are registered from the cached catalog, so the load path never waits
-// on the server. Executor runs in native elicitation mode: when an action
-// needs approval it asks this plugin, which answers from the user's rules or
-// a BB prompt - never the model.
+// on the server. When an Executor action pauses for approval, this plugin
+// answers it from the user's rules or a BB prompt - never the model.
 import type { BbPluginApi, PluginAgentToolContext, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { EXECUTOR_CHANGED, type ExecutorState, rpcContract } from "./contract.js";
 import { createApprovals } from "./src/approvals.js";
-import { createExecutorClient, detectVersion, endpointUrl, integrations } from "./src/executor.js";
-import { discover } from "./src/oauth/discovery.js";
-import { createOAuthFlow, describeRefusal, isUnauthorized } from "./src/oauth/flow.js";
+import { createExecutorClient, endpointUrl, fetchExecutor } from "./src/executor.js";
+import { discoverWith } from "./src/oauth/discovery.js";
+import { createOAuthFlow, isUnauthorized } from "./src/oauth/flow.js";
 import { quietLogger, warnQuietly } from "./src/server/log.js";
 import { registerProviderEnv } from "./src/server/provider-env.js";
 import { oauthRedirectUri, registerOAuthRoutes } from "./src/server/routes.js";
@@ -37,8 +36,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
 
   const oauth = createOAuthFlow({
     store: createOAuthStore(database),
-    discover,
-    fetchImpl: fetch,
+    discover: (url) => discoverWith(fetchExecutor, url),
+    fetchImpl: fetchExecutor,
     redirectUri: (origin) => oauthRedirectUri(bb, origin),
     onAuthFailure: (_serverId, message) => {
       store.setError(`Sign-in expired: ${message}`);
@@ -75,7 +74,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     try {
       return await client.callTool(name, args, {
         signal: ctx.signal,
-        elicit: (params) => approvals.answer(params, ctx),
+        decide: (pending) => approvals.answer(pending, ctx),
       });
     } catch (error) {
       return {
@@ -98,7 +97,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       // Not signed in yet is a state the panel already shows, not a failure.
       const signedOut = !store.get().token && oauth.status(SERVER_ID) === "disconnected";
       if (!(signedOut && isUnauthorized(error))) {
-        store.setError(`Could not read tools: ${describeRefusal(error)}`);
+        store.setError(`Could not read tools: ${error instanceof Error ? error.message : String(error)}`);
       }
       log.warn(`Executor sync failed, keeping the cached tools: ${String(error)}`);
     }
@@ -117,11 +116,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       url: connection.url,
       hasToken: connection.token !== null,
       auth: connection.token !== null ? "connected" : oauth.status(SERVER_ID),
-      version: detectVersion(connection.tools),
       error: connection.error,
       syncedAt: connection.syncedAt,
       tools: connection.tools.map((tool) => tool.name),
-      integrations: integrations(connection.tools),
       changedTools: changedTools(bb, connection.tools),
       approveAll: connection.approveAll,
       rules: store.rules(),
@@ -189,10 +186,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       const s = state();
       if (s.url === null) return { exitCode: 0, stdout: "Executor is not configured. Open the Executor panel in BB.\n" };
       const lines = [
-        `${s.url}  ${s.version ?? "version unknown"}  ${s.auth}`,
+        `${s.url}  ${s.auth}`,
         ...(s.error === null ? [] : [`! ${s.error}`]),
         `tools: ${s.tools.join(", ") || "none yet"}`,
-        ...(s.integrations.length === 0 ? [] : [`reaches: ${s.integrations.join(", ")}`]),
         `auto-approve: ${s.approveAll ? "everything" : s.rules.join(", ") || "nothing"}`,
       ];
       return { exitCode: 0, stdout: `${lines.join("\n")}\n` };

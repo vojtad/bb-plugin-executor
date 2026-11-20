@@ -2,58 +2,56 @@ import type { PluginAgentToolContentPart } from "@get-bb/plugin-sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import {
-  type ElicitRequest,
-  ElicitRequestSchema,
-  type ElicitResult,
-} from "@modelcontextprotocol/sdk/types.js";
+import { type Pending, pendingInteraction, type Response } from "./approvals.js";
 import { toBbContent } from "./mcp/content.js";
 import { flattenSchema, RecursiveSchemaError } from "./mcp/schema-tools.js";
 import { isUnauthorized } from "./oauth/flow.js";
 import type { ExecutorTool } from "./storage/store.js";
 
-/**
- * How long one call may run, approval prompts included. BB's tool-call round
- * trip gives up near five minutes, so this stays under it.
- */
+/** How long one request may run. BB's tool-call round trip gives up near five minutes. */
 export const CALL_TIMEOUT_MS = 270_000;
 
 /**
- * The URL to talk to: native elicitation, so approvals come to this plugin
- * instead of to the model (v1 and v2 both read the query parameter; v2 also
- * preselects it on its OAuth consent page). A URL that already names a mode
- * is left alone.
+ * The URL to talk to, always in model mode: a paused call comes back as a
+ * result this plugin answers through `resume`. Native mode would skip approval
+ * for `call` entirely (it trusts the client to have confirmed it, and BB does
+ * not), and automatic mode approves everything. Executor reads the mode per
+ * request for an access token, and preselects it on its OAuth consent page.
  */
 export function endpointUrl(url: string): string {
   const parsed = new URL(url);
-  if (!parsed.searchParams.has("elicitation_mode")) {
-    parsed.searchParams.set("elicitation_mode", "native");
-  }
+  parsed.searchParams.set("elicitation_mode", "model");
   return parsed.toString();
 }
 
-/** v2 replaced v1's artifact tools with `call`, `search` and `describe`. */
-export function detectVersion(tools: readonly { name: string }[]): "v1" | "v2" | null {
-  if (tools.length === 0) return null;
-  return tools.some((tool) => tool.name === "call") ? "v2" : "v1";
-}
+/**
+ * `fetch` that refuses to follow Cloudflare Access to its login page. Followed,
+ * the redirect ends in an HTML page that surfaces as an unreadable content-type
+ * or JSON error instead of saying what is in the way.
+ */
+export const fetchExecutor: typeof fetch = async (input, init) => {
+  const response = await fetch(input, { ...init, redirect: "manual" });
+  if (response.status < 300 || response.status >= 400) return response;
+  const location = response.headers.get("location") ?? "";
+  if (/^https:\/\/[^/]+\.cloudflareaccess\.com\//.test(location)) {
+    throw new Error(
+      "Cloudflare Access sent this request to its login page. Executor only accepts its own "
+      + "tokens, so Access has to let /mcp, /.well-known/ and /api/auth/oauth2/ through "
+      + "(a Bypass policy for those paths).",
+    );
+  }
+  return fetch(input, init);
+};
 
-export function integrations(tools: readonly ExecutorTool[]): string[] {
-  const execute = tools.find((tool) => tool.name === "execute");
-  if (!execute) return [];
-  const section = /## Available integrations([\s\S]*?)(?:\n#|$)/.exec(execute.description)?.[1] ?? "";
-  return [...section.matchAll(/^- `([^`]+)`/gm)]
-    .map((match) => match[1].replace(/_com$/, "").replace(/_/g, " "));
-}
-
-export type Elicit = (params: ElicitRequest["params"]) => Promise<ElicitResult>;
+/** The plugin answers pauses itself; the agent never sees this tool. */
+export const RESUME_TOOL = "resume";
 
 export interface ExecutorClient {
   listTools(): Promise<ExecutorTool[]>;
   callTool(
     name: string,
     args: Record<string, unknown>,
-    options: { signal: AbortSignal; elicit: Elicit },
+    options: { signal: AbortSignal; decide: (pending: Pending) => Promise<Response> },
   ): Promise<{ content: PluginAgentToolContentPart[]; isError: boolean }>;
 }
 
@@ -70,7 +68,7 @@ function httpTransport(url: string, authHeaders: () => Promise<Record<string, st
     fetch: async (input, init) => {
       const headers = new Headers(init?.headers);
       for (const [name, value] of Object.entries(await authHeaders())) headers.set(name, value);
-      return fetch(input, { ...init, headers });
+      return fetchExecutor(input, { ...init, headers });
     },
   });
 }
@@ -91,24 +89,14 @@ function describeFailure(error: unknown): unknown {
   );
 }
 
-/**
- * A fresh MCP session per operation. It costs one `initialize` round trip,
- * and buys an elicitation handler bound to exactly one tool call - and so to
- * the thread whose user must answer it.
- */
+/** A fresh MCP session per operation, so no pooled session can go stale. */
 export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
   const createTransport = deps.createTransport ?? httpTransport;
 
-  async function session<T>(elicit: Elicit | null, run: (client: Client) => Promise<T>): Promise<T> {
+  async function session<T>(run: (client: Client) => Promise<T>): Promise<T> {
     const url = deps.url();
     if (url === null) throw new Error("No Executor URL is configured.");
-    const client = new Client(
-      { name: "bb-plugin-executor", version: "0.2.0" },
-      { capabilities: elicit === null ? {} : { elicitation: { form: {} } } },
-    );
-    if (elicit !== null) {
-      client.setRequestHandler(ElicitRequestSchema, (request) => elicit(request.params));
-    }
+    const client = new Client({ name: "bb-plugin-executor", version: "0.3.0" });
     try {
       await client.connect(createTransport(endpointUrl(url), () => deps.authHeaders()));
       return await run(client);
@@ -120,20 +108,21 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
   }
 
   /** A 401 is refused before anything runs, so one refresh and retry is safe even for a write. */
-  async function withAuthRetry<T>(elicit: Elicit | null, run: (client: Client) => Promise<T>): Promise<T> {
+  async function withAuthRetry<T>(run: (client: Client) => Promise<T>): Promise<T> {
     try {
-      return await session(elicit, run);
+      return await session(run);
     } catch (error) {
       if (!isUnauthorized(error) || !(await deps.refreshAuth())) throw error;
-      return session(elicit, run);
+      return session(run);
     }
   }
 
   return {
-    listTools: () => withAuthRetry(null, async (client) => {
+    listTools: () => withAuthRetry(async (client) => {
       const { tools } = await client.listTools();
       const usable: ExecutorTool[] = [];
       for (const tool of tools) {
+        if (tool.name === RESUME_TOOL) continue;
         try {
           usable.push({
             name: tool.name,
@@ -147,11 +136,15 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
       return usable;
     }),
 
-    callTool: (name, args, { signal, elicit }) => withAuthRetry(elicit, async (client) => {
-      const result = await client.callTool({ name, arguments: args }, undefined, {
-        signal,
-        timeout: CALL_TIMEOUT_MS,
-      });
+    callTool: (name, args, { signal, decide }) => withAuthRetry(async (client) => {
+      const call = (tool: string, input: Record<string, unknown>) =>
+        client.callTool({ name: tool, arguments: input }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
+      let result = await call(name, args);
+      for (let pending = pendingInteraction(result.structuredContent); pending !== null;
+        pending = pendingInteraction(result.structuredContent)) {
+        const response = await decide(pending);
+        result = await call(RESUME_TOOL, { requestId: pending.requestId, response });
+      }
       return {
         content: toBbContent(result.content, result.structuredContent),
         isError: result.isError === true,

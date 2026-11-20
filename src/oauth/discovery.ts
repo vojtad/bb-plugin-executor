@@ -261,8 +261,8 @@ export async function registerClientWith(
     throw new Error(
       `${metadata.registrationEndpoint} answered dynamic client registration with `
       + `${response.headers.get("content-type") ?? "an unknown content type"} rather `
-      + "than JSON, so this server does not appear to support OAuth. If it "
-      + "authenticates with a token, set that under Headers instead.",
+      + "than JSON, so this server does not appear to support OAuth. Use an access "
+      + "token instead.",
     );
   }
   if (typeof body.client_id !== "string") {

@@ -6,18 +6,21 @@ import { z } from "zod";
 import { createApprovals } from "../src/approvals.js";
 import { createExecutorClient } from "../src/executor.js";
 
-/** A stand-in Executor whose `execute` asks for approval the way v1 and v2 do. */
-function fakeExecutor(message: string, requestedSchema: { type: "object"; properties: Record<string, never> | Record<string, { type: "string" }> }) {
-  const answers: string[] = [];
+/** A stand-in Executor v2 in model mode: `call` pauses, `resume` finishes it. */
+function fakeExecutor(paused: Record<string, unknown>) {
+  const answers: unknown[] = [];
   const server = new McpServer({ name: "executor", version: "0" });
-  server.registerTool("execute", { inputSchema: { code: z.string() } }, async (_args, extra) => {
-    const answer = await server.server.elicitInput(
-      { message, requestedSchema },
-      { relatedRequestId: extra.requestId },
-    );
-    answers.push(answer.action);
-    return { content: [{ type: "text", text: answer.action === "accept" ? "sent" : "not sent" }] };
-  });
+  server.registerTool("call", { inputSchema: { calls: z.unknown() } }, async () =>
+    ({ content: [{ type: "text", text: "paused" }], structuredContent: paused }));
+  server.registerTool(
+    "resume",
+    { inputSchema: { requestId: z.string(), response: z.object({ action: z.string() }).passthrough() } },
+    async ({ response }) => {
+      answers.push(response);
+      const status = response.action === "accept" ? "sent" : "not sent";
+      return { content: [{ type: "text", text: status }], structuredContent: { status: "completed" } };
+    },
+  );
   const client = createExecutorClient({
     url: () => "https://executor.test/mcp",
     authHeaders: async () => ({}),
@@ -31,10 +34,16 @@ function fakeExecutor(message: string, requestedSchema: { type: "object"; proper
   return { client, answers };
 }
 
-const APPROVAL = "Approve tools.google_gmail.user.me.send?\n\nArguments:\n{\"to\":\"a@b.c\"}";
-const EMPTY = { type: "object" as const, properties: {} };
+const APPROVAL = {
+  status: "approval-required",
+  requestId: "apr_1",
+  invocation: { app: "gmail", tool: "send", input: { to: "a@b.c" } },
+  elicitation: { mode: "form", message: "Approve send?\n\nArguments:\n{\"to\":\"a@b.c\"}", requestedSchema: { type: "object", properties: {} } },
+  expiresAt: 0,
+};
 
-function setup(options: { rules?: string[]; approveAll?: boolean; reply?: unknown }) {
+async function run(paused: Record<string, unknown>, options: { rules?: string[]; approveAll?: boolean; reply?: unknown }) {
+  const executor = fakeExecutor(paused);
   const rules = [...(options.rules ?? [])];
   const requestInput = vi.fn(async (_request: PluginInteractionRequest) =>
     ({ outcome: "submitted" as const, value: options.reply ?? { decision: "deny", content: {} } }));
@@ -45,48 +54,48 @@ function setup(options: { rules?: string[]; approveAll?: boolean; reply?: unknow
     addRule: (pattern) => { rules.push(pattern); },
   });
   const ctx = { threadId: "thr_1", signal: new AbortController().signal };
-  return { approvals, requestInput, rules, ctx };
-}
-
-async function run(message: string, schema: Parameters<typeof fakeExecutor>[1], options: Parameters<typeof setup>[0]) {
-  const executor = fakeExecutor(message, schema);
-  const { approvals, requestInput, rules, ctx } = setup(options);
-  const result = await executor.client.callTool("execute", { code: "" }, {
+  const result = await executor.client.callTool("call", { calls: [] }, {
     signal: ctx.signal,
-    elicit: (params) => approvals.answer(params, ctx),
+    decide: (pending) => approvals.answer(pending, ctx),
   });
   return { result, answers: executor.answers, requestInput, rules };
 }
 
 describe("Executor approvals", () => {
-  it("approves a tool matching a prefix rule without asking", async () => {
-    const { answers, requestInput } = await run(APPROVAL, EMPTY, { rules: ["tools.google_gmail.*"] });
-    expect(answers).toEqual(["accept"]);
+  it("approves an app tool matching a prefix rule without asking", async () => {
+    const { answers, requestInput, result } = await run(APPROVAL, { rules: ["gmail.*"] });
+    expect(answers).toEqual([{ action: "accept", content: {} }]);
     expect(requestInput).not.toHaveBeenCalled();
+    expect(result.content).toEqual([{ type: "text", text: "sent" }]);
   });
 
-  it("asks the user otherwise, and Always approve becomes a rule for that exact tool", async () => {
-    const { answers, requestInput, rules } = await run(APPROVAL, EMPTY, {
+  it("asks the user otherwise, and Always approve becomes a rule for that app tool", async () => {
+    const { answers, requestInput, rules } = await run(APPROVAL, {
       reply: { decision: "always", content: {} },
     });
-    expect(answers).toEqual(["accept"]);
+    expect(answers).toEqual([{ action: "accept", content: {} }]);
     expect(requestInput).toHaveBeenCalledTimes(1);
-    expect(rules).toEqual(["tools.google_gmail.user.me.send"]);
+    expect(rules).toEqual(["gmail.send"]);
   });
 
   it("passes a denial back to Executor", async () => {
-    const { answers, result } = await run(APPROVAL, EMPTY, {});
-    expect(answers).toEqual(["decline"]);
+    const { answers, result } = await run(APPROVAL, {});
+    expect(answers).toEqual([{ action: "decline" }]);
     expect(result.content).toEqual([{ type: "text", text: "not sent" }]);
   });
 
   it("never auto-approves a question a tool asks, even with Approve all on", async () => {
     const { requestInput, answers } = await run(
-      "Which calendar?",
-      { type: "object", properties: { calendar: { type: "string" } } },
+      {
+        status: "input-required",
+        requestId: "elc_1",
+        tool: { app: "calendar", tool: "create" },
+        elicitation: { message: "Which calendar?", requestedSchema: { type: "object", properties: { calendar: { type: "string" } } } },
+        expiresAt: 0,
+      },
       { approveAll: true, reply: { decision: "once", content: { calendar: "work" } } },
     );
     expect(requestInput).toHaveBeenCalledTimes(1);
-    expect(answers).toEqual(["accept"]);
+    expect(answers).toEqual([{ action: "accept", content: { calendar: "work" } }]);
   });
 });

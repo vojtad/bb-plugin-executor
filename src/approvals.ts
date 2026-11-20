@@ -1,5 +1,4 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { ElicitRequest, ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   APPROVAL_RENDERER_ID,
   type ApprovalField,
@@ -8,49 +7,71 @@ import {
 } from "../contract.js";
 
 /**
- * How long a prompt stays open. It runs inside the `execute` call, which BB's
- * tool round trip cuts off near five minutes (see CALL_TIMEOUT_MS), and v1
- * Executor gives up on a pending approval after four.
+ * How long a prompt stays open. It runs inside the tool call, which BB's tool
+ * round trip cuts off near five minutes (see CALL_TIMEOUT_MS).
  */
 export const APPROVAL_TIMEOUT_MS = 180_000;
 
 const TITLE_MAX_CHARS = 160;
 const MESSAGE_MAX_CHARS = 4_000;
 
-/**
- * Executor's own policy gate asks "Approve <tool>?" with an empty form, in v1
- * and v2 alike. Anything else - a tool asking for input, a sign-in link, an
- * approval carrying its own terms in `_meta` - is not a policy approval and is
- * never auto-accepted.
- */
-export function approvedTool(params: ElicitRequest["params"]): string | null {
-  if (params.mode === "url") return null;
-  if (params._meta !== undefined && Object.keys(params._meta).length > 0) return null;
-  if (Object.keys(params.requestedSchema.properties).length > 0) return null;
-  return /^Approve (\S+)\?/.exec(params.message)?.[1] ?? null;
+/** A paused `execute` or `call`, as Executor returns it in model mode. */
+export interface Pending {
+  requestId: string;
+  /** `app.tool` of a policy approval; null for a question a running tool asks. */
+  tool: string | null;
+  /** `app.tool` the question comes from, for the prompt title. */
+  source: string;
+  message: string;
+  requestedSchema: { properties?: Record<string, unknown>; required?: string[] };
 }
 
-/** An exact tool name, or a prefix ending in `*` (e.g. `google_gmail.*`). */
+export interface Response {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, string | number | boolean>;
+}
+
+type Json = Record<string, unknown>;
+const isRecord = (value: unknown): value is Json =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export function pendingInteraction(structured: unknown): Pending | null {
+  if (!isRecord(structured) || typeof structured.requestId !== "string") return null;
+  const elicitation = isRecord(structured.elicitation) ? structured.elicitation : {};
+  const base = {
+    requestId: structured.requestId,
+    message: typeof elicitation.message === "string" ? elicitation.message : "",
+    requestedSchema: isRecord(elicitation.requestedSchema) ? elicitation.requestedSchema : {},
+  };
+  const name = (from: unknown): string =>
+    isRecord(from) ? `${String(from.app)}.${String(from.tool)}` : "unknown";
+  if (structured.status === "approval-required") {
+    const tool = name(structured.invocation);
+    return { ...base, tool, source: tool };
+  }
+  if (structured.status === "input-required") {
+    return { ...base, tool: null, source: name(structured.tool) };
+  }
+  return null;
+}
+
+/** An exact `app.tool`, or a prefix ending in `*` (e.g. `gmail.*`). */
 export function matchesRule(rules: readonly string[], tool: string): boolean {
   return rules.some((rule) =>
     rule.endsWith("*") ? tool.startsWith(rule.slice(0, -1)) : rule === tool);
 }
 
-function formFields(params: ElicitRequest["params"]): ApprovalField[] {
-  if (params.mode === "url") return [];
-  const { properties, required = [] } = params.requestedSchema;
+function formFields(schema: Pending["requestedSchema"]): ApprovalField[] {
+  const required = schema.required ?? [];
   const fields: ApprovalField[] = [];
-  for (const [name, property] of Object.entries(properties)) {
-    const schema = property as { type?: string; title?: string; enum?: unknown[] };
-    const type = schema.type;
-    if (type !== "string" && type !== "number" && type !== "integer" && type !== "boolean") {
-      continue;
-    }
+  for (const [name, property] of Object.entries(schema.properties ?? {})) {
+    const { type, title, enum: options } = property as { type?: string; title?: string; enum?: unknown[] };
+    if (type !== "string" && type !== "number" && type !== "integer" && type !== "boolean") continue;
     fields.push({
       name,
-      title: schema.title ?? name,
+      title: title ?? name,
       type,
-      options: Array.isArray(schema.enum) ? schema.enum.map(String) : null,
+      options: Array.isArray(options) ? options.map(String) : null,
       required: required.includes(name),
     });
   }
@@ -62,10 +83,7 @@ function shorten(text: string, max: number): string {
 }
 
 export interface Approvals {
-  answer(
-    params: ElicitRequest["params"],
-    ctx: { threadId: string; signal: AbortSignal },
-  ): Promise<ElicitResult>;
+  answer(pending: Pending, ctx: { threadId: string; signal: AbortSignal }): Promise<Response>;
 }
 
 export function createApprovals(deps: {
@@ -76,7 +94,7 @@ export function createApprovals(deps: {
   timeoutMs?: number;
 }): Approvals {
   // A thread holds one pending interaction at a time, and an agent may run
-  // several `execute` calls in parallel, so prompts queue per thread.
+  // several Executor calls in parallel, so prompts queue per thread.
   const queues = new Map<string, Promise<unknown>>();
 
   function enqueue<T>(threadId: string, task: () => Promise<T>): Promise<T> {
@@ -87,25 +105,28 @@ export function createApprovals(deps: {
     return running;
   }
 
+  const ACCEPT: Response = { action: "accept", content: {} };
   const autoApproved = (tool: string | null): boolean =>
     tool !== null && (deps.approveAll() || matchesRule(deps.rules(), tool));
 
   async function prompt(
-    params: ElicitRequest["params"],
-    tool: string | null,
+    pending: Pending,
     ctx: { threadId: string; signal: AbortSignal },
-  ): Promise<ElicitResult> {
+  ): Promise<Response> {
     const payload: ApprovalPayload = {
-      message: shorten(params.message, MESSAGE_MAX_CHARS),
-      tool,
-      fields: formFields(params),
+      message: shorten(pending.message, MESSAGE_MAX_CHARS),
+      tool: pending.tool,
+      fields: formFields(pending.requestedSchema),
     };
     let result;
     try {
       result = await deps.requestInput({
         threadId: ctx.threadId,
         rendererId: APPROVAL_RENDERER_ID,
-        title: shorten(tool === null ? "Executor needs input" : `Approve ${tool}?`, TITLE_MAX_CHARS),
+        title: shorten(
+          pending.tool === null ? `${pending.source} needs input` : `Approve ${pending.tool}?`,
+          TITLE_MAX_CHARS,
+        ),
         payload,
         timeoutMs: deps.timeoutMs ?? APPROVAL_TIMEOUT_MS,
       }, { signal: ctx.signal });
@@ -116,18 +137,16 @@ export function createApprovals(deps: {
     if (result.outcome === "cancelled") return { action: "cancel" };
     const parsed = approvalResponseSchema.safeParse(result.value);
     if (!parsed.success || parsed.data.decision === "deny") return { action: "decline" };
-    if (parsed.data.decision === "always" && tool !== null) deps.addRule(tool);
+    if (parsed.data.decision === "always" && pending.tool !== null) deps.addRule(pending.tool);
     return { action: "accept", content: parsed.data.content };
   }
 
   return {
-    answer(params, ctx) {
-      if (params.mode === "url") return Promise.resolve({ action: "decline" });
-      const tool = approvedTool(params);
-      if (autoApproved(tool)) return Promise.resolve({ action: "accept", content: {} });
+    answer(pending, ctx) {
+      if (autoApproved(pending.tool)) return Promise.resolve(ACCEPT);
       // Re-checked after the queue: an "Always" answered just ahead covers this one.
       return enqueue(ctx.threadId, () =>
-        autoApproved(tool) ? Promise.resolve({ action: "accept", content: {} }) : prompt(params, tool, ctx));
+        autoApproved(pending.tool) ? Promise.resolve(ACCEPT) : prompt(pending, ctx));
     },
   };
 }

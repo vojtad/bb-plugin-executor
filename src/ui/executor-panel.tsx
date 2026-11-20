@@ -20,7 +20,7 @@ function statusText(state: ExecutorState): string {
   if (state.error !== null) return "Needs attention";
   if (state.auth === "needs-reconnect") return "Sign-in expired";
   if (state.auth === "disconnected") return "Not signed in";
-  return state.version === null ? "Connected" : `Connected, Executor ${state.version}`;
+  return "Connected";
 }
 
 export function ExecutorPanel(props: { subPath?: string }): ReactElement {
@@ -181,7 +181,6 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
           {state.tools.length > 0 ? (
             <p className="text-xs text-muted-foreground">
               Tools: {state.tools.join(", ")}
-              {state.integrations.length > 0 ? <><br />Reaches: {state.integrations.join(", ")}</> : null}
             </p>
           ) : null}
 
@@ -251,8 +250,8 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
           >
             <Input
               value={rule}
-              placeholder="Tool name, or a prefix ending in *"
-              aria-label="Tool name or prefix ending in *"
+              placeholder="app.tool, or a prefix ending in *"
+              aria-label="app.tool, or a prefix ending in *"
               onChange={(event) => { setRule(event.target.value); }}
             />
             <Button type="submit" size="sm" variant="outline" disabled={busy || rule.trim() === ""}>
