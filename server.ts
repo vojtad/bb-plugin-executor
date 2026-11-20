@@ -120,16 +120,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       const [tools, { apps, organization }, mode] = await Promise.all([
         client.listTools(), client.listApps(), client.approvalMode(),
       ]);
-      store.setCatalog(tools, apps, organization);
+      store.setCatalog(tools, apps, organization, mode);
       registerTools(bb, tools, runTool);
-      // An OAuth grant keeps the mode picked on Executor's consent page; any other
-      // mode answers approvals without asking this plugin.
-      if (mode !== null && mode !== "model") {
-        store.setError(
-          `Executor approves this connection in "${mode}" mode, so approvals bypass BB. `
-          + "Sign in again and choose model approvals on Executor's consent page.",
-        );
-      }
     } catch (error) {
       // Not signed in yet is a state the panel already shows, not a failure.
       const signedOut = !store.get().token && oauth.status(SERVER_ID) === "disconnected";
@@ -162,6 +154,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
         ? null
         : `${new URL(connection.url).origin}${connection.organization === null ? "" : `/org/${connection.organization}`}`,
       changedTools: changedTools(bb, connection.tools),
+      mode: connection.mode,
       approveAll: connection.approveAll,
       rules: store.rules(),
     };
@@ -212,6 +205,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       store.clearCatalog();
     }),
     sync: async () => { await sync(); return done; },
+    check_updates: () => client.checkUpdates(),
     reload: () => {
       // After the reply: a reload disposes the instance answering it.
       setTimeout(() => { void bb.sdk.plugins.reload({ pluginId: bb.pluginId }).catch(() => undefined); }, 0);
@@ -237,7 +231,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       const s = state();
       if (s.url === null) return { exitCode: 0, stdout: "Executor is not configured. Open the Executor panel in BB.\n" };
       const lines = [
-        `${s.url}  ${s.auth}`,
+        `${s.url}  ${s.auth}${s.mode === null ? "" : `  approvals: ${s.mode} mode`}`,
         ...(s.error === null ? [] : [`! ${s.error}`]),
         `tools: ${s.tools.join(", ") || (s.error === null ? "none yet" : "none (fix the error above in the Executor panel)")}`,
         ...s.apps.map((app) => `app ${app.slug} (${app.name}): `

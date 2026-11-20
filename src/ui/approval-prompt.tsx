@@ -1,5 +1,5 @@
 import { type ReactElement, useState } from "react";
-import type { PluginPendingInteractionProps } from "@get-bb/plugin-sdk/app";
+import { type PluginPendingInteractionProps, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,7 @@ function toContent(fields: readonly ApprovalField[], values: Record<string, stri
 export function ApprovalPrompt({ interaction, submit, cancel }: PluginPendingInteractionProps): ReactElement {
   const [answering, setAnswering] = useState(false);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
+  const navigate = useBbNavigate();
   const parsed = approvalPayloadSchema.safeParse(interaction.payload);
 
   if (!parsed.success) {
@@ -38,7 +39,7 @@ export function ApprovalPrompt({ interaction, submit, cancel }: PluginPendingInt
       </div>
     );
   }
-  const { message, tool, fields } = parsed.data;
+  const { message, tool, fields, url } = parsed.data;
 
   const decide = (decision: ApprovalResponse["decision"]): void => {
     if (answering) return;
@@ -92,19 +93,31 @@ export function ApprovalPrompt({ interaction, submit, cancel }: PluginPendingInt
         </div>
       ))}
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button size="sm" disabled={answering} onClick={() => { decide("once"); }}>
-          {tool === null ? "Submit" : "Approve"}
-        </Button>
-        {tool !== null ? (
-          <Button size="sm" variant="outline" disabled={answering} onClick={() => { decide("always"); }}>
-            Always approve {tool}
+      {url !== null ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => { navigate.openUrl(url); }}>Open approval page</Button>
+          <Button size="sm" variant="outline" disabled={answering} onClick={() => { decide("once"); }}>
+            I've answered
           </Button>
-        ) : null}
-        <Button size="sm" variant="destructive" disabled={answering} onClick={() => { decide("deny"); }}>
-          Deny
-        </Button>
-      </div>
+          <Button size="sm" variant="destructive" disabled={answering} onClick={() => { decide("deny"); }}>
+            Cancel
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" disabled={answering} onClick={() => { decide("once"); }}>
+            {tool === null ? "Submit" : "Approve"}
+          </Button>
+          {tool !== null ? (
+            <Button size="sm" variant="outline" disabled={answering} onClick={() => { decide("always"); }}>
+              Always approve {tool}
+            </Button>
+          ) : null}
+          <Button size="sm" variant="destructive" disabled={answering} onClick={() => { decide("deny"); }}>
+            Deny
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

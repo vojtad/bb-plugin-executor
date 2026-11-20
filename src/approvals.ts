@@ -15,15 +15,17 @@ export const APPROVAL_TIMEOUT_MS = 180_000;
 const TITLE_MAX_CHARS = 160;
 const MESSAGE_MAX_CHARS = 4_000;
 
-/** A paused `execute` or `call`, as Executor returns it in model mode. */
+/** A paused `execute` or `call`, or a native-mode question. */
 export interface Pending {
   requestId: string;
-  /** `app.tool` of a policy approval; null for a question a running tool asks. */
+  /** `app.tool` of a policy approval the plugin may answer; null when only the user can. */
   tool: string | null;
   /** `app.tool` the question comes from, for the prompt title. */
   source: string;
   message: string;
   requestedSchema: { properties?: Record<string, unknown>; required?: string[] };
+  /** Browser mode: the page where the user answers; the plugin can only wait for it. */
+  approvalUrl: string | null;
 }
 
 export interface Response {
@@ -38,8 +40,10 @@ const isRecord = (value: unknown): value is Json =>
 export function pendingInteraction(structured: unknown): Pending | null {
   if (!isRecord(structured) || typeof structured.requestId !== "string") return null;
   const elicitation = isRecord(structured.elicitation) ? structured.elicitation : {};
+  const approvalUrl = typeof structured.approvalUrl === "string" ? structured.approvalUrl : null;
   const base = {
     requestId: structured.requestId,
+    approvalUrl,
     message: typeof elicitation.message === "string" ? elicitation.message : "",
     requestedSchema: isRecord(elicitation.requestedSchema) ? elicitation.requestedSchema : {},
   };
@@ -47,7 +51,7 @@ export function pendingInteraction(structured: unknown): Pending | null {
     isRecord(from) ? `${String(from.app)}.${String(from.tool)}` : "unknown";
   if (structured.status === "approval-required") {
     const tool = name(structured.invocation);
-    return { ...base, tool, source: tool };
+    return { ...base, tool: approvalUrl === null ? tool : null, source: tool };
   }
   if (structured.status === "input-required") {
     return { ...base, tool: null, source: name(structured.tool) };
@@ -116,7 +120,8 @@ export function createApprovals(deps: {
     const payload: ApprovalPayload = {
       message: shorten(pending.message, MESSAGE_MAX_CHARS),
       tool: pending.tool,
-      fields: formFields(pending.requestedSchema),
+      fields: pending.approvalUrl === null ? formFields(pending.requestedSchema) : [],
+      url: pending.approvalUrl,
     };
     let result;
     try {
@@ -124,7 +129,9 @@ export function createApprovals(deps: {
         threadId: ctx.threadId,
         rendererId: APPROVAL_RENDERER_ID,
         title: shorten(
-          pending.tool === null ? `${pending.source} needs input` : `Approve ${pending.tool}?`,
+          pending.tool === null && pending.approvalUrl === null
+            ? `${pending.source} needs input`
+            : `Approve ${pending.tool ?? pending.source}?`,
           TITLE_MAX_CHARS,
         ),
         payload,

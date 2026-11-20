@@ -26,6 +26,15 @@ export const appSchema = z.object({
 });
 export type ExecutorApp = z.infer<typeof appSchema>;
 
+export const appUpdateSchema = z.object({
+  id: z.string(),
+  /** Files that differ from the catalog entry the app was installed from; null for an app not from the catalog. */
+  catalogChanges: z.number().nullable(),
+  /** The apps framework version the app declares; null when it declares none. */
+  framework: z.string().nullable(),
+});
+export type AppUpdate = z.infer<typeof appUpdateSchema>;
+
 export const stateSchema = z.object({
   url: z.string().nullable(),
   hasToken: z.boolean(),
@@ -39,6 +48,8 @@ export const stateSchema = z.object({
   dashboardUrl: z.string().nullable(),
   /** Tools whose description changed since registration: a reload is owed. */
   changedTools: z.array(z.string()),
+  /** The approval mode Executor applies to this connection; null until known. */
+  mode: z.string().nullable(),
   approveAll: z.boolean(),
   rules: z.array(z.string()),
 });
@@ -68,6 +79,10 @@ export const rpcContract = defineRpcContract({
   },
   disconnect: { input: z.null(), output: ok },
   sync: { input: z.null(), output: ok },
+  check_updates: {
+    input: z.null(),
+    output: z.object({ framework: z.string().nullable(), apps: z.array(appUpdateSchema) }),
+  },
   reload: { input: z.null(), output: ok },
   set_approve_all: { input: z.object({ enabled: z.boolean() }), output: ok },
   add_rule: { input: z.object({ pattern: z.string() }), output: ok },
@@ -91,6 +106,8 @@ export const approvalPayloadSchema = z.object({
   /** The Executor tool being approved; null for any other question a tool asks. */
   tool: z.string().nullable(),
   fields: z.array(approvalFieldSchema),
+  /** Browser mode: the user answers on this Executor page, not in the prompt. */
+  url: z.string().nullable(),
 });
 export type ApprovalPayload = z.infer<typeof approvalPayloadSchema>;
 

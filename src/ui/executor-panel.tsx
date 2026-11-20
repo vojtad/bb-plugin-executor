@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   EXECUTOR_CHANGED,
+  type AppUpdate,
   type ExecutorRpcContract,
   type ExecutorState,
   OAUTH_CALLBACK_SUBPATH,
@@ -35,6 +36,29 @@ function Disclosure(props: { title: string; summary: string; children: ReactNode
   );
 }
 
+const MODE_NOTES: Record<string, string> = {
+  model: "Executor is in model mode: your rules decide, and anything else is a prompt in the thread.",
+  automatic: "Executor is in automatic mode and approves actions itself, so these rules are not used. "
+    + "Questions a tool asks still come to the thread.",
+  native: "Executor is in native mode: it doesn't say which app an approval is for, so every approval "
+    + "is a prompt and these rules are not used. executor_call runs without any approval in this mode.",
+  browser: "Executor is in browser mode: approvals happen on Executor's page, linked from the prompt in "
+    + "the thread, so these rules are not used.",
+};
+
+function updateText(update: AppUpdate | undefined, framework: string | null): string | null {
+  if (update === undefined) return null;
+  const parts: string[] = [];
+  if (update.catalogChanges === 0) parts.push("matches the catalog");
+  else if (update.catalogChanges !== null) {
+    parts.push(`${update.catalogChanges} file${update.catalogChanges === 1 ? "" : "s"} differ from the catalog`);
+  }
+  if (update.framework !== null && framework !== null && update.framework !== framework) {
+    parts.push(`built for ${update.framework}, server runs ${framework}`);
+  }
+  return parts.length === 0 ? "up to date" : parts.join("; ");
+}
+
 function statusText(state: ExecutorState): string {
   if (state.url === null) return "Not set up";
   if (state.error !== null) return "Needs attention";
@@ -55,6 +79,7 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
   const [cfClientId, setCfClientId] = useState("");
   const [cfClientSecret, setCfClientSecret] = useState("");
   const [rule, setRule] = useState("");
+  const [updates, setUpdates] = useState<{ framework: string | null; apps: AppUpdate[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
 
@@ -294,12 +319,36 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
 
         {state.apps.length > 0 ? (
           <section className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium text-foreground">Apps</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-medium text-foreground">Apps</h2>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto"
+                disabled={busy}
+                onClick={() => {
+                  void run(async () => { setUpdates(await rpcRef.current.call("check_updates", null)); });
+                }}
+              >
+                Check for updates
+              </Button>
+            </div>
+            {updates !== null && updates.apps.some((update) => (update.catalogChanges ?? 0) > 0) ? (
+              <p className="text-xs text-muted-foreground">
+                An app that differs from the catalog was either changed in Executor or has a newer catalog
+                version. Open it to compare and redeploy.
+              </p>
+            ) : null}
             <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
               {state.apps.map((app) => (
                 <li key={app.id} className="flex items-center gap-2 px-2 py-1.5 text-xs">
                   <div className="flex min-w-0 flex-col">
                     <span className="truncate text-foreground">{app.name}</span>
+                    {updateText(updates?.apps.find((update) => update.id === app.id), updates?.framework ?? null) !== null ? (
+                      <span className="truncate text-foreground">
+                        {updateText(updates?.apps.find((update) => update.id === app.id), updates?.framework ?? null)}
+                      </span>
+                    ) : null}
                     <span className="truncate text-muted-foreground">
                       {[
                         ...app.accounts.map((account) =>
@@ -328,6 +377,12 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
 
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-medium text-foreground">Auto-approve</h2>
+          {state.mode !== null ? (
+            <p className={`text-xs ${state.mode === "model" ? "text-muted-foreground" : "text-foreground"}`}>
+              {MODE_NOTES[state.mode] ?? `Executor is in "${state.mode}" mode.`}
+              {state.mode === "model" ? null : " To change it, sign in again and pick model on Executor's consent page."}
+            </p>
+          ) : null}
           <div className="flex items-center gap-2">
             <Checkbox
               id="approve-all"

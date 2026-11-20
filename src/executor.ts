@@ -2,28 +2,25 @@ import type { PluginAgentToolContentPart } from "@get-bb/plugin-sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { type Pending, pendingInteraction, type Response } from "./approvals.js";
 import { toBbContent } from "./mcp/content.js";
 import { flattenSchema, RecursiveSchemaError } from "./mcp/schema-tools.js";
 import { isUnauthorized } from "./oauth/flow.js";
-import type { ExecutorApp } from "../contract.js";
+import { createHash } from "node:crypto";
+import type { AppUpdate, ExecutorApp } from "../contract.js";
 import type { ExecutorTool } from "./storage/store.js";
 
 /** How long one request may run. BB's tool-call round trip gives up near five minutes. */
 export const CALL_TIMEOUT_MS = 270_000;
 
 /**
- * The URL to talk to, always in model mode: a paused call comes back as a
- * result this plugin answers through `resume`. Native mode would skip approval
- * for `call` entirely (it trusts the client to have confirmed it, and BB does
- * not), and automatic mode approves everything. Model is Executor's default,
- * and its canonical address carries no parameter: `?elicitation_mode=model` is
- * a resource its sign-in does not recognise.
+ * The URL as given, validated. Executor reads the approval mode from it for an
+ * API key (the plain /mcp URL is model mode, its default and the only one where
+ * the plugin decides) and from the consent page for a sign-in.
  */
 export function endpointUrl(url: string): string {
-  const parsed = new URL(url);
-  parsed.searchParams.delete("elicitation_mode");
-  return parsed.toString();
+  return new URL(url).toString();
 }
 
 const ACCESS_REFUSED = "Cloudflare Access refused the request. Save an Access service token "
@@ -49,6 +46,8 @@ export interface ExecutorClient {
   listTools(): Promise<ExecutorTool[]>;
   /** The approval mode Executor applies to this credential, or null when it does not say. */
   approvalMode(): Promise<string | null>;
+  /** Each app against its catalog entry and the framework version the server runs. */
+  checkUpdates(): Promise<{ framework: string | null; apps: AppUpdate[] }>;
   /** The apps installed in Executor, with their linked accounts, and the organization slug. */
   listApps(): Promise<{ apps: ExecutorApp[]; organization: string | null }>;
   callTool(
@@ -99,10 +98,32 @@ function describeFailure(error: unknown): unknown {
 export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
   const createTransport = deps.createTransport ?? httpTransport;
 
-  async function session<T>(run: (client: Client) => Promise<T>): Promise<T> {
+  async function session<T>(
+    run: (client: Client) => Promise<T>,
+    decide?: (pending: Pending) => Promise<Response>,
+  ): Promise<T> {
     const url = deps.url();
     if (url === null) throw new Error("No Executor URL is configured.");
-    const client = new Client({ name: "bb-plugin-executor", version: "0.3.0" });
+    const client = new Client(
+      { name: "bb-plugin-executor", version: "0.3.0" },
+      { capabilities: decide === undefined ? {} : { elicitation: { form: {} } } },
+    );
+    if (decide !== undefined) {
+      // Native mode asks over MCP instead of pausing, and names only the
+      // app-local tool, so no rule can match: the user always answers.
+      client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
+        if (params.mode === "url") return { action: "decline" };
+        const { action, content } = await decide({
+          requestId: "",
+          tool: null,
+          source: "Executor",
+          message: params.message,
+          requestedSchema: params.requestedSchema,
+          approvalUrl: null,
+        });
+        return content === undefined ? { action } : { action, content };
+      });
+    }
     try {
       await client.connect(createTransport(endpointUrl(url), () => deps.authHeaders()));
       return await run(client);
@@ -114,12 +135,15 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
   }
 
   /** A 401 is refused before anything runs, so one refresh and retry is safe even for a write. */
-  async function withAuthRetry<T>(run: (client: Client) => Promise<T>): Promise<T> {
+  async function withAuthRetry<T>(
+    run: (client: Client) => Promise<T>,
+    decide?: (pending: Pending) => Promise<Response>,
+  ): Promise<T> {
     try {
-      return await session(run);
+      return await session(run, decide);
     } catch (error) {
       if (!isUnauthorized(error) || !(await deps.refreshAuth())) throw error;
-      return session(run);
+      return session(run, decide);
     }
   }
 
@@ -150,6 +174,37 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
       const body: unknown = await response.json().catch(() => null);
       return isRecord(body) && typeof body.mode === "string" ? body.mode : null;
     },
+
+    checkUpdates: () => withAuthRetry(async (client) => {
+      const [release, list] = await callExecutorTools(client, [
+        { path: "tools.executor.framework.release", input: {} },
+        { path: "tools.executor.appManagement.list", input: {} },
+      ]);
+      // Executor keeps its own app current; there is nothing to compare it with.
+      const apps = (Array.isArray(list) ? list.filter(isRecord) : []).filter((app) => app.slug !== "executor");
+      const sources = await callExecutorTools(client, apps.map((app) => ({
+        path: "tools.executor.appManagement.source",
+        input: { path: { app: app.id } },
+      })));
+      const updates = await Promise.all(apps.map(async (app, index) => {
+        const source = sources[index];
+        const files = isRecord(source) && Array.isArray(source.files) ? source.files.filter(isRecord) : [];
+        const reference = isRecord(app.copiedFrom) ? app.copiedFrom.reference : null;
+        const catalog = typeof reference === "string" && reference.startsWith("https://catalog.executor.sh/")
+          ? await fetch(reference).then((response) => response.json()).catch(() => null) as unknown
+          : null;
+        const catalogFiles = isRecord(catalog) && Array.isArray(catalog.files) ? catalog.files.filter(isRecord) : null;
+        return {
+          id: String(app.id),
+          catalogChanges: catalogFiles === null ? null : changedFiles(files, catalogFiles),
+          framework: declaredFramework(files),
+        };
+      }));
+      return {
+        framework: isRecord(release) && typeof release.version === "string" ? release.version : null,
+        apps: updates,
+      };
+    }),
 
     listApps: () => withAuthRetry(async (client) => {
       const [context, list] = await callExecutorTools(client, [
@@ -190,13 +245,23 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
       for (let pending = pendingInteraction(result.structuredContent); pending !== null;
         pending = pendingInteraction(result.structuredContent)) {
         const response = await decide(pending);
-        result = await call(RESUME_TOOL, { requestId: pending.requestId, response });
+        if (pending.approvalUrl === null) {
+          result = await call(RESUME_TOOL, { requestId: pending.requestId, response });
+        } else if (response.action === "accept") {
+          // Browser mode: the answer was given on Executor's page; resume collects it.
+          result = await call(RESUME_TOOL, { requestId: pending.requestId });
+        } else {
+          return {
+            content: [{ type: "text", text: "The user did not answer Executor's approval page, so the call did not continue." }],
+            isError: true,
+          };
+        }
       }
       return {
         content: toBbContent(result.content, result.structuredContent),
         isError: result.isError === true,
       };
-    }),
+    }, decide),
   };
 }
 
@@ -216,4 +281,37 @@ async function callExecutorTools(
     const entry: unknown = values[index];
     return isRecord(entry) && entry.ok === true ? entry.value : null;
   });
+}
+
+type SourceFile = Record<string, unknown>;
+
+function fileBytes(file: SourceFile): Buffer {
+  const content = typeof file.content === "string" ? file.content : "";
+  return Buffer.from(content, file.encoding === "base64" ? "base64" : "utf8");
+}
+
+/** Git's blob id, so a file Executor returns only by object id compares with one returned whole. */
+function blobId(file: SourceFile): string {
+  if (typeof file.object === "string") return file.object;
+  const bytes = fileBytes(file);
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
+
+function changedFiles(mine: SourceFile[], theirs: SourceFile[]): number {
+  const ids = (files: SourceFile[]) => new Map(files.map((file) => [String(file.path), blobId(file)]));
+  const a = ids(mine);
+  const b = ids(theirs);
+  return [...new Set([...a.keys(), ...b.keys()])].filter((path) => a.get(path) !== b.get(path)).length;
+}
+
+function declaredFramework(files: SourceFile[]): string | null {
+  const manifest = files.find((file) => file.path === "package.json" && typeof file.content === "string");
+  if (manifest === undefined) return null;
+  try {
+    const parsed: unknown = JSON.parse(fileBytes(manifest).toString("utf8"));
+    const dependencies = isRecord(parsed) && isRecord(parsed.dependencies) ? parsed.dependencies : {};
+    return typeof dependencies.apps === "string" ? dependencies.apps : null;
+  } catch {
+    return null;
+  }
 }

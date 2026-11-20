@@ -51,6 +51,9 @@ export const MIGRATIONS = [
   ALTER TABLE connection ADD COLUMN apps TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE connection ADD COLUMN organization TEXT;
   `,
+  `
+  ALTER TABLE connection ADD COLUMN mode TEXT;
+  `,
 ];
 
 /** A tool as Executor lists it, cached so the load path never waits on the server. */
@@ -74,6 +77,8 @@ export interface Connection extends Credentials {
   apps: ExecutorApp[];
   /** Organization slug, for dashboard links. */
   organization: string | null;
+  /** The approval mode Executor applies to this connection. */
+  mode: string | null;
   syncedAt: number | null;
   approveAll: boolean;
 }
@@ -83,7 +88,7 @@ export interface Store {
   setTarget(url: string | null, credentials: Credentials): void;
   /** A different server's catalog says nothing about the new one. */
   clearCatalog(): void;
-  setCatalog(tools: ExecutorTool[], apps: ExecutorApp[], organization: string | null): void;
+  setCatalog(tools: ExecutorTool[], apps: ExecutorApp[], organization: string | null, mode: string | null): void;
   setError(error: string | null): void;
   setApproveAll(enabled: boolean): void;
   rules(): string[];
@@ -100,6 +105,7 @@ interface Row {
   tools: string;
   apps: string;
   organization: string | null;
+  mode: string | null;
   synced_at: number | null;
   approve_all: number;
 }
@@ -117,6 +123,7 @@ export function createStore(db: Database.Database): Store {
         tools: JSON.parse(row.tools) as ExecutorTool[],
         apps: JSON.parse(row.apps) as ExecutorApp[],
         organization: row.organization,
+        mode: row.mode,
         syncedAt: row.synced_at,
         approveAll: row.approve_all === 1,
       };
@@ -128,13 +135,13 @@ export function createStore(db: Database.Database): Store {
     },
     clearCatalog() {
       db.prepare(
-        "UPDATE connection SET tools = '[]', apps = '[]', organization = NULL, synced_at = NULL WHERE id = 1",
+        "UPDATE connection SET tools = '[]', apps = '[]', organization = NULL, mode = NULL, synced_at = NULL WHERE id = 1",
       ).run();
     },
-    setCatalog(tools, apps, organization) {
+    setCatalog(tools, apps, organization, mode) {
       db.prepare(
-        "UPDATE connection SET tools = ?, apps = ?, organization = ?, synced_at = ?, error = NULL WHERE id = 1",
-      ).run(JSON.stringify(tools), JSON.stringify(apps), organization, Date.now());
+        "UPDATE connection SET tools = ?, apps = ?, organization = ?, mode = ?, synced_at = ?, error = NULL WHERE id = 1",
+      ).run(JSON.stringify(tools), JSON.stringify(apps), organization, mode, Date.now());
     },
     setError(error) {
       db.prepare("UPDATE connection SET error = ? WHERE id = 1").run(error);
