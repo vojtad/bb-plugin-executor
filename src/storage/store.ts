@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { ExecutorApp } from "../../contract.js";
 
 /** Appended, never edited: the array index is the migration id. */
 export const MIGRATIONS = [
@@ -46,6 +47,10 @@ export const MIGRATIONS = [
   ALTER TABLE connection ADD COLUMN cf_client_id TEXT;
   ALTER TABLE connection ADD COLUMN cf_client_secret TEXT;
   `,
+  `
+  ALTER TABLE connection ADD COLUMN apps TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE connection ADD COLUMN organization TEXT;
+  `,
 ];
 
 /** A tool as Executor lists it, cached so the load path never waits on the server. */
@@ -66,6 +71,9 @@ export interface Connection extends Credentials {
   url: string | null;
   error: string | null;
   tools: ExecutorTool[];
+  apps: ExecutorApp[];
+  /** Organization slug, for dashboard links. */
+  organization: string | null;
   syncedAt: number | null;
   approveAll: boolean;
 }
@@ -73,7 +81,9 @@ export interface Connection extends Credentials {
 export interface Store {
   get(): Connection;
   setTarget(url: string | null, credentials: Credentials): void;
-  setTools(tools: ExecutorTool[]): void;
+  /** A different server's catalog says nothing about the new one. */
+  clearCatalog(): void;
+  setCatalog(tools: ExecutorTool[], apps: ExecutorApp[], organization: string | null): void;
   setError(error: string | null): void;
   setApproveAll(enabled: boolean): void;
   rules(): string[];
@@ -88,6 +98,8 @@ interface Row {
   cf_client_secret: string | null;
   error: string | null;
   tools: string;
+  apps: string;
+  organization: string | null;
   synced_at: number | null;
   approve_all: number;
 }
@@ -103,20 +115,26 @@ export function createStore(db: Database.Database): Store {
         cfClientSecret: row.cf_client_secret,
         error: row.error,
         tools: JSON.parse(row.tools) as ExecutorTool[],
+        apps: JSON.parse(row.apps) as ExecutorApp[],
+        organization: row.organization,
         syncedAt: row.synced_at,
         approveAll: row.approve_all === 1,
       };
     },
     setTarget(url, { token, cfClientId, cfClientSecret }) {
-      // A different server's catalog says nothing about the new one.
       db.prepare(
-        "UPDATE connection SET url = ?, token = ?, cf_client_id = ?, cf_client_secret = ?, "
-        + "error = NULL, tools = '[]', synced_at = NULL WHERE id = 1",
+        "UPDATE connection SET url = ?, token = ?, cf_client_id = ?, cf_client_secret = ?, error = NULL WHERE id = 1",
       ).run(url, token, cfClientId, cfClientSecret);
     },
-    setTools(tools) {
-      db.prepare("UPDATE connection SET tools = ?, synced_at = ?, error = NULL WHERE id = 1")
-        .run(JSON.stringify(tools), Date.now());
+    clearCatalog() {
+      db.prepare(
+        "UPDATE connection SET tools = '[]', apps = '[]', organization = NULL, synced_at = NULL WHERE id = 1",
+      ).run();
+    },
+    setCatalog(tools, apps, organization) {
+      db.prepare(
+        "UPDATE connection SET tools = ?, apps = ?, organization = ?, synced_at = ?, error = NULL WHERE id = 1",
+      ).run(JSON.stringify(tools), JSON.stringify(apps), organization, Date.now());
     },
     setError(error) {
       db.prepare("UPDATE connection SET error = ? WHERE id = 1").run(error);

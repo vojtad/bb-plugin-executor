@@ -14,7 +14,7 @@ import { registerProviderEnv } from "./src/server/provider-env.js";
 import { oauthRedirectUri, registerOAuthRoutes } from "./src/server/routes.js";
 import { createOAuthStore } from "./src/storage/oauth-store.js";
 import { createStore, MIGRATIONS } from "./src/storage/store.js";
-import { changedTools, registerConfigure, registerTools } from "./src/tools.js";
+import { changedTools, registerConfigure, registeredName, registerTools } from "./src/tools.js";
 
 /** The OAuth store is keyed by server; there is only ever this one. */
 const SERVER_ID = "executor";
@@ -34,11 +34,36 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     }
   };
 
+  const accessHeaders = (): Record<string, string> => {
+    const { cfClientId, cfClientSecret } = store.get();
+    return cfClientId && cfClientSecret
+      ? { "CF-Access-Client-Id": cfClientId, "CF-Access-Client-Secret": cfClientSecret }
+      : {};
+  };
+
+  /**
+   * Sign-in requests to Executor pass Access too; the service token never goes
+   * to another host. Access adds its own cookie to what it lets through, and
+   * Executor's auth then refuses a cookie-bearing POST without an Origin, so
+   * these name Executor's own.
+   */
+  const fetchWithAccess: typeof fetch = (input, init) => {
+    const { url } = store.get();
+    const target = new URL(input instanceof Request ? input.url : String(input));
+    if (url === null || target.origin !== new URL(url).origin) return fetchExecutor(input, init);
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(accessHeaders())) headers.set(name, value);
+    headers.set("Origin", target.origin);
+    return fetchExecutor(input, { ...init, headers });
+  };
+
   const oauth = createOAuthFlow({
     store: createOAuthStore(database),
-    discover: (url) => discoverWith(fetchExecutor, url),
-    fetchImpl: fetchExecutor,
+    discover: (url) => discoverWith(fetchWithAccess, url),
+    fetchImpl: fetchWithAccess,
     redirectUri: (origin) => oauthRedirectUri(bb, origin),
+    // Executor's MCP resource accepts only tokens carrying this scope.
+    scopes: () => "mcp",
     onAuthFailure: (_serverId, message) => {
       store.setError(`Sign-in expired: ${message}`);
       warnQuietly(bb, `Executor needs reconnecting: ${message}`);
@@ -51,10 +76,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const client = createExecutorClient({
     url: () => store.get().url,
     authHeaders: async (): Promise<Record<string, string>> => {
-      const { url, token, cfClientId, cfClientSecret } = store.get();
-      const access: Record<string, string> = cfClientId && cfClientSecret
-        ? { "CF-Access-Client-Id": cfClientId, "CF-Access-Client-Secret": cfClientSecret }
-        : {};
+      const { url, token } = store.get();
+      const access = accessHeaders();
       if (token) return { ...access, Authorization: `Bearer ${token}` };
       const bearer = url === null ? null : await oauth.accessToken(SERVER_ID, endpointUrl(url));
       return bearer ? { ...access, Authorization: `Bearer ${bearer}` } : access;
@@ -94,8 +117,19 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   async function sync(): Promise<void> {
     if (store.get().url === null) return;
     try {
-      store.setTools(await client.listTools());
-      registerTools(bb, store.get().tools, runTool);
+      const [tools, { apps, organization }, mode] = await Promise.all([
+        client.listTools(), client.listApps(), client.approvalMode(),
+      ]);
+      store.setCatalog(tools, apps, organization);
+      registerTools(bb, tools, runTool);
+      // An OAuth grant keeps the mode picked on Executor's consent page; any other
+      // mode answers approvals without asking this plugin.
+      if (mode !== null && mode !== "model") {
+        store.setError(
+          `Executor approves this connection in "${mode}" mode, so approvals bypass BB. `
+          + "Sign in again and choose model approvals on Executor's consent page.",
+        );
+      }
     } catch (error) {
       // Not signed in yet is a state the panel already shows, not a failure.
       const signedOut = !store.get().token && oauth.status(SERVER_ID) === "disconnected";
@@ -108,7 +142,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   }
 
   registerTools(bb, store.get().tools, runTool);
-  registerConfigure(bb, () => store.get().tools);
+  registerConfigure(bb, () => store.get());
   registerProviderEnv(bb);
   registerOAuthRoutes(bb, { flow: oauth, onConnected: () => { void sync(); } });
   bb.background.schedule("sync", SYNC_CRON, sync);
@@ -122,7 +156,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       auth: connection.token !== null ? "connected" : oauth.status(SERVER_ID),
       error: connection.error,
       syncedAt: connection.syncedAt,
-      tools: connection.tools.map((tool) => tool.name),
+      tools: connection.tools.map((tool) => registeredName(tool.name)),
+      apps: connection.apps,
+      dashboardUrl: connection.url === null
+        ? null
+        : `${new URL(connection.url).origin}${connection.organization === null ? "" : `/org/${connection.organization}`}`,
       changedTools: changedTools(bb, connection.tools),
       approveAll: connection.approveAll,
       rules: store.rules(),
@@ -144,7 +182,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       const current = store.get();
       const next = (input: string | null, stored: string | null): string | null =>
         input === null ? stored : input.trim() || null;
-      if (trimmed !== current.url) oauth.forget(SERVER_ID);
+      if (trimmed !== current.url) {
+        oauth.forget(SERVER_ID);
+        store.clearCatalog();
+      }
       store.setTarget(trimmed, {
         token: next(token, current.token),
         cfClientId: next(cfClientId, current.cfClientId),
@@ -168,6 +209,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     disconnect: () => mutate(() => {
       oauth.forget(SERVER_ID);
       store.setTarget(null, { token: null, cfClientId: null, cfClientSecret: null });
+      store.clearCatalog();
     }),
     sync: async () => { await sync(); return done; },
     reload: () => {
@@ -197,7 +239,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       const lines = [
         `${s.url}  ${s.auth}`,
         ...(s.error === null ? [] : [`! ${s.error}`]),
-        `tools: ${s.tools.join(", ") || "none yet"}`,
+        `tools: ${s.tools.join(", ") || (s.error === null ? "none yet" : "none (fix the error above in the Executor panel)")}`,
+        ...s.apps.map((app) => `app ${app.slug} (${app.name}): `
+          + ([...app.accounts.map((account) => `${account.label} [${account.signIn}]`),
+            ...app.missing.map((requirement) => `${requirement} [no account]`)].join(", ") || "no accounts needed")),
         `auto-approve: ${s.approveAll ? "everything" : s.rules.join(", ") || "nothing"}`,
       ];
       return { exitCode: 0, stdout: `${lines.join("\n")}\n` };

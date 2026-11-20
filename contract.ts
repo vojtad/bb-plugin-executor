@@ -16,6 +16,16 @@ export function oauthRedirectUriFor(origin: string): string {
   return `${origin.replace(/\/+$/, "")}${PANEL_ROUTE}/${OAUTH_CALLBACK_SUBPATH}`;
 }
 
+export const appSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  accounts: z.array(z.object({ label: z.string(), signIn: z.string() })),
+  /** Account requirements nothing is linked to yet. */
+  missing: z.array(z.string()),
+});
+export type ExecutorApp = z.infer<typeof appSchema>;
+
 export const stateSchema = z.object({
   url: z.string().nullable(),
   hasToken: z.boolean(),
@@ -24,6 +34,9 @@ export const stateSchema = z.object({
   error: z.string().nullable(),
   syncedAt: z.number().nullable(),
   tools: z.array(z.string()),
+  apps: z.array(appSchema),
+  /** Executor dashboard, and the organization's path in it; null until synced. */
+  dashboardUrl: z.string().nullable(),
   /** Tools whose description changed since registration: a reload is owed. */
   changedTools: z.array(z.string()),
   approveAll: z.boolean(),

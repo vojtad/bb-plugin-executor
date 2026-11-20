@@ -1,5 +1,5 @@
 import type { BbPluginApi, PluginAgentToolContext, PluginAgentToolResult } from "@get-bb/plugin-sdk";
-import type { ExecutorTool } from "./storage/store.js";
+import type { Connection, ExecutorTool } from "./storage/store.js";
 
 export type RunTool = (
   name: string,
@@ -31,6 +31,14 @@ function shape(tool: ExecutorTool): string {
   return JSON.stringify([tool.description, tool.inputSchema]);
 }
 
+/**
+ * `executor_search`, not `search`: a bare name collides with other plugins'
+ * tools, and an agent searching its deferred tools for "executor" finds these.
+ */
+export function registeredName(upstream: string): string {
+  return `executor_${upstream}`;
+}
+
 function label(prefix: string, name: string): string {
   const text = `${prefix}${name}`;
   return text.length <= LABEL_MAX_CHARS ? text : `${text.slice(0, LABEL_MAX_CHARS - 3)}...`;
@@ -43,11 +51,11 @@ export function registerTools(bb: BbPluginApi, tools: readonly ExecutorTool[], r
     if (names.has(tool.name)) continue;
     try {
       bb.agents.registerTool({
-        name: tool.name,
+        name: registeredName(tool.name),
         description: tool.description,
         parameters: tool.inputSchema,
         presentation: {
-          label: { pending: label("Running ", tool.name), completed: label("Ran ", tool.name) },
+          label: { pending: label("Executor: ", tool.name), completed: label("Executor: ", tool.name) },
         },
         execute: (params, ctx) => run(
           tool.name,
@@ -71,29 +79,45 @@ export function changedTools(bb: BbPluginApi, tools: readonly ExecutorTool[]): s
     .map((tool) => tool.name);
 }
 
-export function instructions(tools: readonly ExecutorTool[]): string {
-  if (tools.length === 0) return "";
+export function instructions(connection: Pick<Connection, "url" | "error" | "tools" | "apps">): string {
+  if (connection.url === null) return "";
+  const apps = connection.apps
+    .filter((app) => app.slug !== "executor")
+    .map((app) => `${app.name} (\`${app.slug}\`)`);
+  if (connection.tools.length === 0) {
+    return "The user's integrations"
+      + (apps.length === 0 ? "" : ` (${apps.join(", ")})`)
+      + " come through Executor, which is not reachable right now"
+      + (connection.error === null ? "" : `: ${connection.error}`)
+      + ". Tell the user to fix it in BB's Executor panel; `bb executor status` shows the state.";
+  }
   return [
-    "Executor's tools (`search`, `describe`, `call`, `execute`) reach the user's connected "
-    + "integrations - Slack, Gmail, Notion and the like - which are not in your tool list under "
-    + "their own names. Search Executor before telling anyone a service is unavailable, and "
-    + "read `skills({ app: \"executor\", name: \"executor\" })` before first use.",
-    "Load a tool by its exact name rather than searching for the service - in Claude Code, "
-    + "`ToolSearch` with `select:search`, where the name may carry your provider's prefix "
-    + "for BB tools, e.g. `select:mcp__bb-bridge__search`.",
+    "Executor connects the user's integrations"
+    + (apps.length === 0 ? "" : `: ${apps.join(", ")}`)
+    + ". They are not in your tool list under their own names; reach them through the "
+    + "`executor_*` tools. Check Executor before telling anyone a service is unavailable.",
+    "Use `executor_search` to find a tool's exact path, `executor_describe` for its signature, "
+    + "and `executor_call` (or `executor_execute` for a program) to run it. Read "
+    + "`executor_skills({ app: \"executor\", name: \"executor\" })` before first use. If your "
+    + "client defers tools, load them by exact name - in Claude Code, `ToolSearch` with "
+    + "`select:mcp__bb-bridge__executor_search,mcp__bb-bridge__executor_call`.",
     "Executor actions that need approval are approved by the user or their auto-approve "
     + "rules, never by you. A declined or cancelled approval means the user said no: do not "
     + "retry it without asking them.",
   ].join("\n\n").slice(0, MAX_INSTRUCTIONS);
 }
 
-export function registerConfigure(bb: BbPluginApi, tools: () => readonly ExecutorTool[]): void {
+/** Instructions are rebuilt per session, so a newly connected app reaches new threads without a reload. */
+export function registerConfigure(
+  bb: BbPluginApi,
+  connection: () => Pick<Connection, "url" | "error" | "tools" | "apps">,
+): void {
   bb.agents.configure(() => {
-    const current = tools();
+    const current = connection();
     const names = registeredFor(bb);
     const text = instructions(current);
     return {
-      tools: current.filter((tool) => names.has(tool.name)).map((tool) => tool.name),
+      tools: current.tools.filter((tool) => names.has(tool.name)).map((tool) => registeredName(tool.name)),
       skills: [],
       ...(text === "" ? {} : { instructions: text }),
     };

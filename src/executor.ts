@@ -6,6 +6,7 @@ import { type Pending, pendingInteraction, type Response } from "./approvals.js"
 import { toBbContent } from "./mcp/content.js";
 import { flattenSchema, RecursiveSchemaError } from "./mcp/schema-tools.js";
 import { isUnauthorized } from "./oauth/flow.js";
+import type { ExecutorApp } from "../contract.js";
 import type { ExecutorTool } from "./storage/store.js";
 
 /** How long one request may run. BB's tool-call round trip gives up near five minutes. */
@@ -45,6 +46,10 @@ export const RESUME_TOOL = "resume";
 
 export interface ExecutorClient {
   listTools(): Promise<ExecutorTool[]>;
+  /** The approval mode Executor applies to this credential, or null when it does not say. */
+  approvalMode(): Promise<string | null>;
+  /** The apps installed in Executor, with their linked accounts, and the organization slug. */
+  listApps(): Promise<{ apps: ExecutorApp[]; organization: string | null }>;
   callTool(
     name: string,
     args: Record<string, unknown>,
@@ -136,6 +141,47 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
       return usable;
     }),
 
+    approvalMode: async () => {
+      const url = deps.url();
+      if (url === null) return null;
+      const response = await fetchExecutor(new URL("/mcp/whoami", url), { headers: await deps.authHeaders() });
+      if (!response.ok) return null;
+      const body: unknown = await response.json().catch(() => null);
+      return isRecord(body) && typeof body.mode === "string" ? body.mode : null;
+    },
+
+    listApps: () => withAuthRetry(async (client) => {
+      const [context, list] = await callExecutorTools(client, [
+        { path: "tools.executor.context.get", input: {} },
+        { path: "tools.executor.appManagement.list", input: {} },
+      ]);
+      const apps = Array.isArray(list) ? list.filter(isRecord) : [];
+      const linked = await callExecutorTools(client, apps.flatMap((app) => [
+        { path: "tools.executor.appAccounts.userList", input: { path: { app: app.id } } },
+        { path: "tools.executor.appAccounts.appList", input: { path: { app: app.id } } },
+      ]));
+      return {
+        organization: isRecord(context) && typeof context.slug === "string" ? context.slug : null,
+        apps: apps.map((app, index) => {
+          const links = [linked[index * 2], linked[index * 2 + 1]]
+            .flatMap((value) => (Array.isArray(value) ? value.filter(isRecord) : []));
+          const requirements = isRecord(app.requirements) && isRecord(app.requirements.accounts)
+            ? Object.keys(app.requirements.accounts)
+            : [];
+          return {
+            id: String(app.id),
+            slug: String(app.slug),
+            name: String(app.name),
+            accounts: links.map((link) => ({
+              label: isRecord(link.account) ? String(link.account.label) : String(link.requirement),
+              signIn: isRecord(link.signIn) ? String(link.signIn.state) : "unknown",
+            })),
+            missing: requirements.filter((name) => !links.some((link) => link.requirement === name)),
+          };
+        }),
+      };
+    }),
+
     callTool: (name, args, { signal, decide }) => withAuthRetry(async (client) => {
       const call = (tool: string, input: Record<string, unknown>) =>
         client.callTool({ name: tool, arguments: input }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
@@ -151,4 +197,22 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
       };
     }),
   };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Runs Executor's own tools through `call`; each result is its value, or null when it failed. */
+async function callExecutorTools(
+  client: Client,
+  calls: { path: string; input: unknown }[],
+): Promise<unknown[]> {
+  if (calls.length === 0) return [];
+  const result = await client.callTool({ name: "call", arguments: { calls } }, undefined, { timeout: CALL_TIMEOUT_MS });
+  const execution = isRecord(result.structuredContent) ? result.structuredContent.execution : null;
+  const values = isRecord(execution) && Array.isArray(execution.value) ? execution.value : [];
+  return calls.map((_, index) => {
+    const entry: unknown = values[index];
+    return isRecord(entry) && entry.ok === true ? entry.value : null;
+  });
 }
