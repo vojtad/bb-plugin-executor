@@ -7,7 +7,6 @@ import { type Pending, pendingInteraction, type Response } from "./approvals.js"
 import { toBbContent } from "./mcp/content.js";
 import { flattenSchema, RecursiveSchemaError } from "./mcp/schema-tools.js";
 import { isUnauthorized } from "./oauth/flow.js";
-import { createHash } from "node:crypto";
 import type { AppUpdate, ExecutorApp } from "../contract.js";
 import type { ExecutorTool } from "./storage/store.js";
 
@@ -181,28 +180,48 @@ export function createExecutorClient(deps: ExecutorClientDeps): ExecutorClient {
         { path: "tools.executor.appManagement.list", input: {} },
       ]);
       // Executor keeps its own app current; there is nothing to compare it with.
-      const apps = (Array.isArray(list) ? list.filter(isRecord) : []).filter((app) => app.slug !== "executor");
-      const sources = await callExecutorTools(client, apps.map((app) => ({
-        path: "tools.executor.appManagement.source",
-        input: { path: { app: app.id } },
-      })));
-      const updates = await Promise.all(apps.map(async (app, index) => {
-        const source = sources[index];
-        const files = isRecord(source) && Array.isArray(source.files) ? source.files.filter(isRecord) : [];
+      const apps = (Array.isArray(list) ? list.filter(isRecord) : [])
+        .filter((app) => app.slug !== "executor" && typeof app.activeVersion === "string");
+      const catalogs = await Promise.all(apps.map(async (app) => {
         const reference = isRecord(app.copiedFrom) ? app.copiedFrom.reference : null;
-        const catalog = typeof reference === "string" && reference.startsWith("https://catalog.executor.sh/")
-          ? await fetch(reference).then((response) => response.json()).catch(() => null) as unknown
-          : null;
-        const catalogFiles = isRecord(catalog) && Array.isArray(catalog.files) ? catalog.files.filter(isRecord) : null;
-        return {
-          id: String(app.id),
-          catalogChanges: catalogFiles === null ? null : changedFiles(files, catalogFiles),
-          framework: declaredFramework(files),
-        };
+        if (typeof reference !== "string" || !reference.startsWith("https://catalog.executor.sh/")) return null;
+        const entry: unknown = await fetch(reference).then((response) => response.json()).catch(() => null);
+        return isRecord(entry) && Array.isArray(entry.files) ? entry.files.filter(isRecord) : null;
       }));
+      // The deployment, not the working source: "Deploy latest" leaves the working branch alone.
+      const reads = apps.map((app, index) => {
+        const paths = new Set(["package.json", ...(catalogs[index] ?? []).map((file) => String(file.path))]);
+        return [...paths].map((path) => ({
+          path: "tools.executor.apps.sourceDisplayFile",
+          input: { path: { app: app.id, version: app.activeVersion }, query: { path } },
+          file: path,
+        }));
+      });
+      const results = await callExecutorTools(client, [
+        ...reads.flat().map(({ path, input }) => ({ path, input })),
+        ...apps.map((app) => ({ path: "tools.executor.apps.deployments", input: { path: { app: app.id } } })),
+      ]);
+      let next = 0;
+      const deployedFiles = reads.map((list) => new Map(list.map(({ file }) => [file, results[next++]])));
+      const deployments = results.slice(next);
       return {
         framework: isRecord(release) && typeof release.version === "string" ? release.version : null,
-        apps: updates,
+        apps: apps.map((app, index) => {
+          const deployed = deployedFiles[index];
+          const catalog = catalogs[index];
+          const active = (Array.isArray(deployments[index]) ? deployments[index] as unknown[] : [])
+            .find((entry) => isRecord(entry) && entry.id === app.activeVersion);
+          const fileCount = isRecord(active) && typeof active.fileCount === "number" ? active.fileCount : null;
+          return {
+            id: String(app.id),
+            // Executor shows deployed files reformatted, but with their stored byte size.
+            catalogChanges: catalog === null ? null : catalog.filter((file) => {
+              const shown = deployed.get(String(file.path));
+              return !isRecord(shown) || shown.size !== Buffer.byteLength(String(file.content ?? ""));
+            }).length + Math.max(0, (fileCount ?? catalog.length) - catalog.length),
+            framework: declaredFramework(deployed.get("package.json")),
+          };
+        }),
       };
     }),
 
@@ -283,32 +302,11 @@ async function callExecutorTools(
   });
 }
 
-type SourceFile = Record<string, unknown>;
 
-function fileBytes(file: SourceFile): Buffer {
-  const content = typeof file.content === "string" ? file.content : "";
-  return Buffer.from(content, file.encoding === "base64" ? "base64" : "utf8");
-}
-
-/** Git's blob id, so a file Executor returns only by object id compares with one returned whole. */
-function blobId(file: SourceFile): string {
-  if (typeof file.object === "string") return file.object;
-  const bytes = fileBytes(file);
-  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-}
-
-function changedFiles(mine: SourceFile[], theirs: SourceFile[]): number {
-  const ids = (files: SourceFile[]) => new Map(files.map((file) => [String(file.path), blobId(file)]));
-  const a = ids(mine);
-  const b = ids(theirs);
-  return [...new Set([...a.keys(), ...b.keys()])].filter((path) => a.get(path) !== b.get(path)).length;
-}
-
-function declaredFramework(files: SourceFile[]): string | null {
-  const manifest = files.find((file) => file.path === "package.json" && typeof file.content === "string");
-  if (manifest === undefined) return null;
+function declaredFramework(file: unknown): string | null {
+  if (!isRecord(file) || typeof file.content !== "string") return null;
   try {
-    const parsed: unknown = JSON.parse(fileBytes(manifest).toString("utf8"));
+    const parsed: unknown = JSON.parse(file.content);
     const dependencies = isRecord(parsed) && isRecord(parsed.dependencies) ? parsed.dependencies : {};
     return typeof dependencies.apps === "string" ? dependencies.apps : null;
   } catch {

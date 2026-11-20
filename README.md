@@ -1,25 +1,24 @@
 # bb-plugin-executor
 
 Connects an [Executor](https://github.com/UsefulSoftwareCo/executor) v2 server
-to BB. Its tools (`search`, `describe`, `call`, `execute`, `skills`) work in
-every thread, and you decide which Executor actions run without asking.
+to BB. Its tools (`executor_search`, `executor_describe`, `executor_call`,
+`executor_execute`, `executor_skills`) work in every thread, and you decide
+which Executor actions run without asking.
 
 ## Setup
 
-Open **Executor** in the sidebar, enter the server's MCP URL, press **Save**,
-then **Sign in**. Executor asks which approval mode to use: keep **model**.
-The plugin warns if the connection runs in any other mode, because then
-approvals would not reach BB.
+See [docs/setup.md](docs/setup.md): an example Executor deployment with Docker
+and a Cloudflare Tunnel, Cloudflare Access, and connecting BB.
 
-An Executor API key works instead of signing in: open **API key** in the
-panel.
-
-The panel lists your Executor apps and their accounts, and links to the
-dashboard. Agents get the same list with each new session.
+In short: open **Executor** in the sidebar, enter the MCP URL, add a Cloudflare
+Access service token if Access protects Executor, press **Save**, then
+**Sign in**. The panel lists your Executor apps and their accounts, links to
+the dashboard, and checks apps for updates.
 
 ## Approvals
 
-When an Executor action needs approval, the plugin decides, not the agent:
+In Executor's model approval mode, the plugin decides when an action needs
+approval, not the agent:
 
 - If **Approve every Executor action** is on, or a rule matches, it runs.
 - Otherwise a prompt appears in the thread: **Approve**, **Always approve**
@@ -29,29 +28,16 @@ A rule is an `app.tool` name such as `gmail.send`, or a prefix ending in `*`
 such as `gmail.*`. Questions a tool asks for itself always go to you, even
 with Approve all on.
 
-A prompt left unanswered for three minutes counts as cancelled.
-
-## Behind Cloudflare Access
-
-Executor accepts only its own tokens, so the plugin passes Access with a
-service token and then signs in to Executor as usual:
-
-1. In Cloudflare Zero Trust, create a service token.
-2. On the Executor Access application, add a **Service Auth** policy that
-   allows it. Keep your own **Allow** policy: the browser sign-in still goes
-   through Access.
-3. Enter the token's client ID and secret under **Cloudflare Access** in the
-   panel.
-
-The plugin sends the token, as `CF-Access-Client-Id` and
-`CF-Access-Client-Secret`, only to the Executor host.
+A prompt left unanswered for three minutes counts as cancelled. Executor's
+other approval modes, where these rules are not used, are described in
+[docs/setup.md](docs/setup.md#approval-modes).
 
 ## How it works
 
-- The plugin connects in model mode (the plain `/mcp` URL). A paused `execute` or
-  `call` comes back to the plugin, which answers it through `resume`. Agents
-  never see `resume`. Native mode is not used: Executor skips approval for
-  `call` there, trusting a client confirmation that BB does not ask for.
+- In model mode a paused `execute` or `call` comes back to the plugin, which
+  answers it through `resume`. Agents never see `resume`. In native mode
+  Executor asks over MCP instead; in browser mode the plugin waits for the
+  answer given on Executor's page.
 - Each tool call opens its own MCP session.
 - Tools are registered as `executor_search`, `executor_call` and so on: bare
   names like `search` collide with other plugins and are hard for an agent to

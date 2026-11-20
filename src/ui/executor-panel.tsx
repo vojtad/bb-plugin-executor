@@ -36,6 +36,8 @@ function Disclosure(props: { title: string; summary: string; children: ReactNode
   );
 }
 
+const SETUP_GUIDE_URL = "https://github.com/vojtad/bb-plugin-executor/blob/main/docs/setup.md";
+
 const MODE_NOTES: Record<string, string> = {
   model: "Executor is in model mode: your rules decide, and anything else is a prompt in the thread.",
   automatic: "Executor is in automatic mode and approves actions itself, so these rules are not used. "
@@ -46,17 +48,25 @@ const MODE_NOTES: Record<string, string> = {
     + "the thread, so these rules are not used.",
 };
 
-function updateText(update: AppUpdate | undefined, framework: string | null): string | null {
+/** The deployed framework version and, for a catalog app, how it compares with the catalog. */
+function versionText(update: AppUpdate | undefined): { text: string; changed: boolean } | null {
   if (update === undefined) return null;
-  const parts: string[] = [];
-  if (update.catalogChanges === 0) parts.push("matches the catalog");
+  const parts = update.framework === null ? [] : [update.framework];
+  if (update.catalogChanges === 0) parts.push("latest");
   else if (update.catalogChanges !== null) {
     parts.push(`${update.catalogChanges} file${update.catalogChanges === 1 ? "" : "s"} differ from the catalog`);
   }
-  if (update.framework !== null && framework !== null && update.framework !== framework) {
-    parts.push(`built for ${update.framework}, server runs ${framework}`);
-  }
-  return parts.length === 0 ? "up to date" : parts.join("; ");
+  return parts.length === 0 ? null : { text: parts.join(" · "), changed: (update.catalogChanges ?? 0) > 0 };
+}
+
+function VersionLabel(props: { update: AppUpdate | undefined }): ReactElement | null {
+  const version = versionText(props.update);
+  if (version === null) return null;
+  return (
+    <span className={`ml-2 ${version.changed ? "text-foreground" : "text-muted-foreground"}`}>
+      {version.text}
+    </span>
+  );
 }
 
 function statusText(state: ExecutorState): string {
@@ -191,7 +201,16 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
               <p className="text-xs text-muted-foreground">
                 In Cloudflare Zero Trust, create a service token, then add a Service Auth policy
                 that allows it to the Executor application. Keep your own Allow policy too: you
-                still sign in through Access in the browser.
+                still sign in through Access in the browser.{" "}
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={() => { navigate.openUrl(SETUP_GUIDE_URL); }}
+                >
+                  Setup guide
+                </Button>
               </p>
               <div className="flex gap-2">
                 <Input
@@ -321,6 +340,9 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
           <section className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-medium text-foreground">Apps</h2>
+              {updates?.framework ? (
+                <span className="text-xs text-muted-foreground">server {updates.framework}</span>
+              ) : null}
               <Button
                 size="sm"
                 variant="outline"
@@ -335,20 +357,17 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
             </div>
             {updates !== null && updates.apps.some((update) => (update.catalogChanges ?? 0) > 0) ? (
               <p className="text-xs text-muted-foreground">
-                An app that differs from the catalog was either changed in Executor or has a newer catalog
-                version. Open it to compare and redeploy.
+                A difference is either a change made in Executor or a newer catalog version.
               </p>
             ) : null}
             <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
               {state.apps.map((app) => (
                 <li key={app.id} className="flex items-center gap-2 px-2 py-1.5 text-xs">
                   <div className="flex min-w-0 flex-col">
-                    <span className="truncate text-foreground">{app.name}</span>
-                    {updateText(updates?.apps.find((update) => update.id === app.id), updates?.framework ?? null) !== null ? (
-                      <span className="truncate text-foreground">
-                        {updateText(updates?.apps.find((update) => update.id === app.id), updates?.framework ?? null)}
-                      </span>
-                    ) : null}
+                    <span className="truncate text-foreground">
+                      {app.name}
+                      <VersionLabel update={updates?.apps.find((update) => update.id === app.id)} />
+                    </span>
                     <span className="truncate text-muted-foreground">
                       {[
                         ...app.accounts.map((account) =>
