@@ -32,6 +32,8 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
   const [state, setState] = useState<ExecutorState | null>(null);
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [cfClientId, setCfClientId] = useState("");
+  const [cfClientSecret, setCfClientSecret] = useState("");
   const [rule, setRule] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
@@ -103,11 +105,16 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
             className="flex flex-col gap-2"
             onSubmit={(event) => {
               event.preventDefault();
+              const keepIfEmpty = (value: string): string | null => (value === "" ? null : value);
               void run(() => rpcRef.current.call("configure", {
                 url,
-                token: token === "" ? null : token,
+                token: keepIfEmpty(token),
+                cfClientId: keepIfEmpty(cfClientId),
+                cfClientSecret: keepIfEmpty(cfClientSecret),
               }), "Saved.");
               setToken("");
+              setCfClientId("");
+              setCfClientSecret("");
             }}
           >
             <Label htmlFor="executor-url">URL</Label>
@@ -125,6 +132,23 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
               placeholder={state.hasToken ? "Saved. Type to replace." : "Leave empty to sign in instead"}
               onChange={(event) => { setToken(event.target.value); }}
             />
+            <Label htmlFor="executor-cf-id">Cloudflare Access service token (optional)</Label>
+            <div className="flex gap-2">
+              <Input
+                id="executor-cf-id"
+                type="password"
+                value={cfClientId}
+                placeholder={state.hasServiceToken ? "Client ID saved" : "Client ID"}
+                onChange={(event) => { setCfClientId(event.target.value); }}
+              />
+              <Input
+                aria-label="Cloudflare Access client secret"
+                type="password"
+                value={cfClientSecret}
+                placeholder={state.hasServiceToken ? "Client secret saved" : "Client secret"}
+                onChange={(event) => { setCfClientSecret(event.target.value); }}
+              />
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button type="submit" size="sm" disabled={busy || url.trim() === ""}>Save</Button>
               {state.url !== null && !state.hasToken && state.auth !== "connected" ? (
@@ -143,15 +167,19 @@ export function ExecutorPanel(props: { subPath?: string }): ReactElement {
                   Refresh tools
                 </Button>
               ) : null}
-              {state.hasToken ? (
+              {state.hasToken || state.hasServiceToken ? (
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   disabled={busy}
-                  onClick={() => { void run(() => rpcRef.current.call("configure", { url, token: "" })); }}
+                  onClick={() => {
+                    void run(() => rpcRef.current.call("configure", {
+                      url, token: "", cfClientId: "", cfClientSecret: "",
+                    }));
+                  }}
                 >
-                  Remove token
+                  Clear saved tokens
                 </Button>
               ) : null}
               {state.url !== null ? (

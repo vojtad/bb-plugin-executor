@@ -6,9 +6,9 @@ every thread, and you decide which Executor actions run without asking.
 
 ## Setup
 
-Open **Executor** in the sidebar, enter the server's MCP URL and press
-**Save**. Then press **Sign in**, or paste a personal access token and press
-**Save** again.
+Open **Executor** in the sidebar, enter the server's MCP URL and an Executor
+API key, and press **Save**. Without a key, save the URL and press
+**Sign in** instead.
 
 ## Approvals
 
@@ -26,17 +26,15 @@ A prompt left unanswered for three minutes counts as cancelled.
 
 ## Behind Cloudflare Access
 
-Executor accepts only tokens it issued itself, so Cloudflare Access must let
-the plugin's own requests through. Add a **Bypass** policy for these paths:
+Executor accepts only its own tokens, so Cloudflare Access can't hand it one.
+Instead, give the plugin both:
 
-- `/mcp`
-- `/.well-known/`
-- `/api/auth/oauth2/`
+- an Executor API key under **Access token**, and
+- a Cloudflare Access service token (client ID and secret) that the Access
+  application's Service Auth policy allows.
 
-Keep the dashboard behind Access. To have Cloudflare verify you when the
-plugin signs in, make Cloudflare Executor's login: add an Access for SaaS OIDC
-app and set `SSO_DISCOVERY_URL`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET` and
-`SSO_ALLOWED_DOMAINS` on the Executor container.
+The plugin sends them on every request, as `Authorization: Bearer` and
+`CF-Access-Client-Id` / `CF-Access-Client-Secret`.
 
 ## How it works
 

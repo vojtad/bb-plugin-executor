@@ -42,6 +42,10 @@ export const MIGRATIONS = [
     created_at INTEGER NOT NULL
   );
   `,
+  `
+  ALTER TABLE connection ADD COLUMN cf_client_id TEXT;
+  ALTER TABLE connection ADD COLUMN cf_client_secret TEXT;
+  `,
 ];
 
 /** A tool as Executor lists it, cached so the load path never waits on the server. */
@@ -51,9 +55,15 @@ export interface ExecutorTool {
   inputSchema: Record<string, unknown>;
 }
 
-export interface Connection {
-  url: string | null;
+/** What the plugin sends on every request: an Executor API key and a Cloudflare Access service token. */
+export interface Credentials {
   token: string | null;
+  cfClientId: string | null;
+  cfClientSecret: string | null;
+}
+
+export interface Connection extends Credentials {
+  url: string | null;
   error: string | null;
   tools: ExecutorTool[];
   syncedAt: number | null;
@@ -62,7 +72,7 @@ export interface Connection {
 
 export interface Store {
   get(): Connection;
-  setTarget(url: string | null, token: string | null): void;
+  setTarget(url: string | null, credentials: Credentials): void;
   setTools(tools: ExecutorTool[]): void;
   setError(error: string | null): void;
   setApproveAll(enabled: boolean): void;
@@ -74,6 +84,8 @@ export interface Store {
 interface Row {
   url: string | null;
   token: string | null;
+  cf_client_id: string | null;
+  cf_client_secret: string | null;
   error: string | null;
   tools: string;
   synced_at: number | null;
@@ -87,17 +99,20 @@ export function createStore(db: Database.Database): Store {
       return {
         url: row.url,
         token: row.token,
+        cfClientId: row.cf_client_id,
+        cfClientSecret: row.cf_client_secret,
         error: row.error,
         tools: JSON.parse(row.tools) as ExecutorTool[],
         syncedAt: row.synced_at,
         approveAll: row.approve_all === 1,
       };
     },
-    setTarget(url, token) {
+    setTarget(url, { token, cfClientId, cfClientSecret }) {
       // A different server's catalog says nothing about the new one.
       db.prepare(
-        "UPDATE connection SET url = ?, token = ?, error = NULL, tools = '[]', synced_at = NULL WHERE id = 1",
-      ).run(url, token);
+        "UPDATE connection SET url = ?, token = ?, cf_client_id = ?, cf_client_secret = ?, "
+        + "error = NULL, tools = '[]', synced_at = NULL WHERE id = 1",
+      ).run(url, token, cfClientId, cfClientSecret);
     },
     setTools(tools) {
       db.prepare("UPDATE connection SET tools = ?, synced_at = ?, error = NULL WHERE id = 1")

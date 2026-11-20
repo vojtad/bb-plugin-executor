@@ -19,6 +19,7 @@ export function oauthRedirectUriFor(origin: string): string {
 export const stateSchema = z.object({
   url: z.string().nullable(),
   hasToken: z.boolean(),
+  hasServiceToken: z.boolean(),
   auth: z.enum(["disconnected", "connected", "needs-reconnect"]),
   error: z.string().nullable(),
   syncedAt: z.number().nullable(),
@@ -34,9 +35,14 @@ const ok = z.object({ ok: z.literal(true) });
 
 export const rpcContract = defineRpcContract({
   state: { input: z.null(), output: stateSchema },
-  /** Save the URL and an optional access token (null keeps the stored one, "" clears it). */
+  /** Save the URL and optional secrets: null keeps the stored value, "" clears it. */
   configure: {
-    input: z.object({ url: z.string(), token: z.string().nullable() }),
+    input: z.object({
+      url: z.string(),
+      token: z.string().nullable(),
+      cfClientId: z.string().nullable(),
+      cfClientSecret: z.string().nullable(),
+    }),
     output: ok,
   },
   connect: {

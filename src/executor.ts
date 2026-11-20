@@ -24,6 +24,9 @@ export function endpointUrl(url: string): string {
   return parsed.toString();
 }
 
+const ACCESS_REFUSED = "Cloudflare Access refused the request. Save an Access service token "
+  + "that the application's Service Auth policy allows, and check its client ID and secret.";
+
 /**
  * `fetch` that refuses to follow Cloudflare Access to its login page. Followed,
  * the redirect ends in an HTML page that surfaces as an unreadable content-type
@@ -33,13 +36,7 @@ export const fetchExecutor: typeof fetch = async (input, init) => {
   const response = await fetch(input, { ...init, redirect: "manual" });
   if (response.status < 300 || response.status >= 400) return response;
   const location = response.headers.get("location") ?? "";
-  if (/^https:\/\/[^/]+\.cloudflareaccess\.com\//.test(location)) {
-    throw new Error(
-      "Cloudflare Access sent this request to its login page. Executor only accepts its own "
-      + "tokens, so Access has to let /mcp, /.well-known/ and /api/auth/oauth2/ through "
-      + "(a Bypass policy for those paths).",
-    );
-  }
+  if (/^https:\/\/[^/]+\.cloudflareaccess\.com\//.test(location)) throw new Error(ACCESS_REFUSED);
   return fetch(input, init);
 };
 
@@ -68,7 +65,10 @@ function httpTransport(url: string, authHeaders: () => Promise<Record<string, st
     fetch: async (input, init) => {
       const headers = new Headers(init?.headers);
       for (const [name, value] of Object.entries(await authHeaders())) headers.set(name, value);
-      return fetchExecutor(input, { ...init, headers });
+      const response = await fetchExecutor(input, { ...init, headers });
+      // Executor never answers MCP with a page; Access does when it refuses.
+      if (response.headers.get("content-type")?.startsWith("text/html")) throw new Error(ACCESS_REFUSED);
+      return response;
     },
   });
 }

@@ -51,10 +51,13 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const client = createExecutorClient({
     url: () => store.get().url,
     authHeaders: async (): Promise<Record<string, string>> => {
-      const { url, token } = store.get();
-      if (token) return { Authorization: `Bearer ${token}` };
-      const access = url === null ? null : await oauth.accessToken(SERVER_ID, endpointUrl(url));
-      return access ? { Authorization: `Bearer ${access}` } : {};
+      const { url, token, cfClientId, cfClientSecret } = store.get();
+      const access: Record<string, string> = cfClientId && cfClientSecret
+        ? { "CF-Access-Client-Id": cfClientId, "CF-Access-Client-Secret": cfClientSecret }
+        : {};
+      if (token) return { ...access, Authorization: `Bearer ${token}` };
+      const bearer = url === null ? null : await oauth.accessToken(SERVER_ID, endpointUrl(url));
+      return bearer ? { ...access, Authorization: `Bearer ${bearer}` } : access;
     },
     refreshAuth: async () => (store.get().token ? false : oauth.refresh(SERVER_ID)),
   });
@@ -115,6 +118,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     return {
       url: connection.url,
       hasToken: connection.token !== null,
+      hasServiceToken: connection.cfClientId !== null && connection.cfClientSecret !== null,
       auth: connection.token !== null ? "connected" : oauth.status(SERVER_ID),
       error: connection.error,
       syncedAt: connection.syncedAt,
@@ -134,13 +138,18 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
 
   bb.rpc.register(rpcContract, {
     state: () => state(),
-    configure: async ({ url, token }) => {
+    configure: async ({ url, token, cfClientId, cfClientSecret }) => {
       const trimmed = url.trim();
       endpointUrl(trimmed); // Throws on a malformed URL.
       const current = store.get();
-      const nextToken = token === null ? current.token : token.trim() || null;
+      const next = (input: string | null, stored: string | null): string | null =>
+        input === null ? stored : input.trim() || null;
       if (trimmed !== current.url) oauth.forget(SERVER_ID);
-      store.setTarget(trimmed, nextToken);
+      store.setTarget(trimmed, {
+        token: next(token, current.token),
+        cfClientId: next(cfClientId, current.cfClientId),
+        cfClientSecret: next(cfClientSecret, current.cfClientSecret),
+      });
       changed();
       await sync();
       return done;
@@ -158,7 +167,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     },
     disconnect: () => mutate(() => {
       oauth.forget(SERVER_ID);
-      store.setTarget(null, null);
+      store.setTarget(null, { token: null, cfClientId: null, cfClientSecret: null });
     }),
     sync: async () => { await sync(); return done; },
     reload: () => {
