@@ -54,23 +54,24 @@ volumes:
 `.env` (run `chmod 600 .env`):
 
 ```sh
-# Public URL of Executor
-BETTER_AUTH_URL=https://executor.example.dev
+# Public URL of Executor, for example https://executor.example.dev
+BETTER_AUTH_URL=https://<hostname>
 # Token of the Cloudflare Tunnel that serves Executor
 TUNNEL_TOKEN=<tunnel token>
 ```
 
-Then run `docker compose up -d`, open `https://executor.example.dev` and
-finish the Executor setup.
+Then run `docker compose up -d`, open `https://<hostname>` and finish the
+Executor setup.
 
 Executor publishes no host ports; only the tunnel reaches it. To update,
 change the image tags, then run `docker compose pull && docker compose up -d`.
 Back up the whole `data` volume: it holds Executor's data and the keys it
 creates on first boot.
 
-## 3. Let the plugin through Access
+## 3. Let MCP clients through Access
 
-Skip this without Access.
+Skip this without Access. If someone else runs the Executor, ask them for
+these values.
 
 Executor accepts only its own tokens, so the plugin passes Access with a
 service token:
@@ -85,7 +86,7 @@ service token:
 ## 4. Connect BB
 
 1. Open **Executor** in the BB sidebar.
-2. Set **MCP URL** to `https://executor.example.dev/mcp`.
+2. Set **MCP URL** to `https://<hostname>/mcp`.
 3. With Access: open **Cloudflare Access** and enter the client ID and the
    client secret.
 4. Click **Save**, then **Sign in**. You sign in to Cloudflare (with Access)
@@ -95,8 +96,8 @@ service token:
 
 The status shows Connected and the panel lists your apps.
 
-Instead of signing in, you can use an Executor API key: in Executor, open your
-avatar > **Account settings** > **Tokens** and create one for one
+Instead of signing in, you can use an optional Executor API key: in Executor,
+open your avatar > **Account settings** > **Tokens** and create a key for one
 organization, then enter it under **API key** in the panel.
 
 ## Approval modes
@@ -115,8 +116,9 @@ To change the mode, click **Sign in again** and pick another one.
 
 ## Other MCP clients
 
-Behind Access, other MCP clients send the same values on every request to
-`https://executor.example.dev/mcp`:
+Behind Access, a client sends the service token on every request to
+`https://<hostname>/mcp`. A client that cannot sign in also sends an Executor
+API key (see above for how to create one).
 
 ```
 CF-Access-Client-Id: <client ID>
@@ -131,4 +133,4 @@ If a Cloudflare header is missing or wrong, the client gets a 302 redirect to
 
 Add apps in Executor, then connect each account there. For Google and Slack
 you need your own OAuth clients, with the redirect URI
-`https://executor.example.dev/api/oauth/callback`.
+`https://<hostname>/api/oauth/callback`.
