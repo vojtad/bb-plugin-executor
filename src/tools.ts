@@ -97,7 +97,8 @@ export function instructions(connection: Pick<Connection, "url" | "error" | "too
     + ". They are not in your tool list under their own names; reach them through the "
     + "`executor_*` tools. Check Executor before telling anyone a service is unavailable.",
     "Use `executor_search` to find a tool's exact path, `executor_describe` for its signature, "
-    + "and `executor_call` (or `executor_execute` for a program) to run it. Read "
+    + "and `executor_call` (or `executor_execute` for a program) to run it. BB does not show you "
+    + "Executor's own server instructions, so read them once with "
     + "`executor_skills({ app: \"executor\", name: \"executor\" })` before first use. If your "
     + "client defers tools, load them by exact name - in Claude Code, `ToolSearch` with "
     + "`select:mcp__bb-bridge__executor_search,mcp__bb-bridge__executor_call`.",
