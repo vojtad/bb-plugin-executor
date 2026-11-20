@@ -17,7 +17,9 @@
     "name": "Executor",
     "description": "Connect an Executor server (v1 or v2), use its tools in every thread, and auto-approve the actions you trust.",
     "branding": {
-      "icon": "PlugSocket"
+      "logo": {
+        "light": "./assets/executor.png"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx"
