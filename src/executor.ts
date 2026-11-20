@@ -16,12 +16,13 @@ export const CALL_TIMEOUT_MS = 270_000;
  * The URL to talk to, always in model mode: a paused call comes back as a
  * result this plugin answers through `resume`. Native mode would skip approval
  * for `call` entirely (it trusts the client to have confirmed it, and BB does
- * not), and automatic mode approves everything. Executor reads the mode per
- * request for an access token, and preselects it on its OAuth consent page.
+ * not), and automatic mode approves everything. Model is Executor's default,
+ * and its canonical address carries no parameter: `?elicitation_mode=model` is
+ * a resource its sign-in does not recognise.
  */
 export function endpointUrl(url: string): string {
   const parsed = new URL(url);
-  parsed.searchParams.set("elicitation_mode", "model");
+  parsed.searchParams.delete("elicitation_mode");
   return parsed.toString();
 }
 

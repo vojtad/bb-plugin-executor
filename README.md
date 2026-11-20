@@ -48,7 +48,7 @@ The plugin sends the token, as `CF-Access-Client-Id` and
 
 ## How it works
 
-- The plugin connects with `?elicitation_mode=model`. A paused `execute` or
+- The plugin connects in model mode (the plain `/mcp` URL). A paused `execute` or
   `call` comes back to the plugin, which answers it through `resume`. Agents
   never see `resume`. Native mode is not used: Executor skips approval for
   `call` there, trusting a client confirmation that BB does not ask for.
